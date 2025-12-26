@@ -1,14 +1,55 @@
 import torch
+from tstep_biem import TStepBiem
+from curve_batch_compile import Curve
 
 
 # Serial solver for parareal
 class CoarseSolver:
+    def __init__(self, options, params, Xwalls, finalTime, initPositions): 
+        self.options = options
+        self.params = params
+        self.Xwalls = Xwalls
+        self.finalTime = finalTime
+        self.RS = torch.zeros(3, params['nvbd'])
+        self.eta = torch.zeros(2 * params['Nbd'], params['nvbd'])
+
+        self.oc = Curve()
+        self.tt = TStepBiem(initPositions, self.Xwalls, self.options, self.params)
+        _, self.area0, self.len0 = self.oc.geomProp(initPositions)
+        self.modes = torch.concatenate((torch.arange(0, params['N'] // 2), 
+                                        torch.arange(-params['N'] // 2, 0))).to(initPositions.device) 
+
     def solve(self, positions: torch.Tensor, sigmaStore: torch.Tensor):
-        pass
+        if self.options['confined']:
+            self.tt.initialConfined()
+
+        num_steps = int(self.finalTime/self.params["dt"])
+
+        for _ in range(num_steps):
+            positionsNew, sigmaStore, self.eta, self.RS, _, _ = self.tt.time_step(positions, sigmaStore, self.eta, self.RS) 
+            if self.options['reparameterization']:
+                # Redistribute arc-length
+                positions0 = positionsNew.clone()
+                for _ in range(5):
+                    positionsNew, allGood = self.oc.redistributeArcLength(positionsNew, self.modes)
+                positions = self.oc.alignCenterAngle(positions0, positionsNew)
+            else:
+                positions = positionsNew
+
+
+            if self.options['correctShape']:
+                positions = self.oc.correctAreaAndLengthAugLag(positions.float(), self.area0, self.len0)
+
+        return positions
+
+
 
 
 # Parallel solver for parareal
 class FineSolver:
+    def __init__(self, options, params, Xwalls, finalTime, initPositions): 
+        options["dt"]/= 10
+        self.solver = CoarseSolver(options, params, Xwalls, finalTime, initPositions)
     def solve(
         self,
         positions: torch.Tensor,
@@ -16,8 +57,11 @@ class FineSolver:
         timeStepSize: float,
         numCores: int,
     ):
-        pass
+        # Parallelize this
+        for i in range(numCores):
+            positions[i] = self.solver.solve(positions[i], sigmaStore[i])
 
+        return positions
 
 class PararealSolver:
     def __init__(self, fineSolver, coarseSolver):
@@ -99,10 +143,10 @@ class PararealSolver:
             latestVesicles[n] = parallelCorrection[n] + (
                 self.coarseSolver.solve(
                     latestVesicles[n - 1], self.sigmaStore[n - 1], timeStepSize
-                )
+                )[0]
                 - self.coarseSolver.solve(
                     baseVesicles[n - 1], self.sigmaStore[n - 1], timeStepSize
-                )
+                )[0]
             )
 
     def parallelSweep(
@@ -112,4 +156,4 @@ class PararealSolver:
     ) -> torch.Tensor:
         return self.fineSolver.solve(
             inputVesicles, self.sigmaStore, timeStepSize, self.numCores
-        )
+        )[0]
