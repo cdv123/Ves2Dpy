@@ -1,6 +1,6 @@
 import torch
 torch.set_default_dtype(torch.float64)
-from filter import interpft_vec
+from tools.filter import interpft_vec
 from capsules import capsules
 from curve_batch_compile import Curve
 
@@ -585,7 +585,7 @@ def naiveNearZoneInfo(vesicleX, vesicleUpX, max_layer_dist=None):
     # torch.cuda.synchronize()
     # print(f'----------- inside nearZoneinfo, creating mask  {start.elapsed_time(end)/1000} sec.')
 
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     
     rows_with_true = torch.max(nbrs_mask.reshape(nv*N, nv, Nup), dim=-1)[0] # (N*nv, nv)
     id1, id2 = torch.where(rows_with_true)

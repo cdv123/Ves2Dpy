@@ -7,7 +7,7 @@ from capsules import capsules
 from poten import Poten
 from tools.filter import interpft_vec, interpft
 from biem_support import wrapper_allExactStokesSLTarget_compare2, naiveNearZoneInfo
-import cupy as cp
+# import cupy as cp
 if torch.cuda.is_available():
     from cupyx.scipy.sparse.linalg import gmres, LinearOperator
 else:
@@ -86,6 +86,7 @@ class TStepBiem:
         # class for evaluating potential so that we don't have
         # to keep building quadrature matrices
         self.op = Poten(prams['N'])
+        print(type(self.op))
 
         # use block-diagonal preconditioner?
         self.usePreco = options['usePreco']
@@ -326,6 +327,9 @@ class TStepBiem:
             RS = RSstore[:, 1:]
             initGMRES = torch.cat([initGMRES, etaStore.view(-1), RS.view(-1)])
 
+        global matvecs
+        matvecs = 0
+
         gmres_func = lambda X: self.time_matvec(X, vesicle)
         cupy_lin_op = LinearOperator((initGMRES.shape[0], initGMRES.shape[0]), gmres_func)
         torch.cuda.empty_cache()
@@ -346,7 +350,7 @@ class TStepBiem:
 
         iflag = info != 0
         iter = counter.niter
-        Xn = torch.as_tensor(Xn, dtype=torch.float64)
+        Xn = torch.as_tensor(Xn, dtype=torch.float32)
 
         # --- Unstack results ---
         eta = torch.zeros((2*Nbd, nvbd), dtype=Xn.dtype) if self.confined else None

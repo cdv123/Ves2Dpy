@@ -109,7 +109,8 @@ Xwalls = None
 # ------------------------------
 
 # Initial shape
-Xics = loadmat("../VF25_TG32Ves.mat").get('X')[:, :3]
+selected_four = [0, 5, 17, 22]  # Indices of the four vesicles to select 
+Xics = loadmat("../VF25_TG32Ves.mat").get('X')[:, selected_four]
 
 sigma = None
 X = torch.from_numpy(Xics).float().to(device)
@@ -122,7 +123,8 @@ X = interpft_vec(X, 128).to(device)
 prams['N'] = X.shape[0]//2
 prams['nv'] = X.shape[1]
 prams['dt'] = 1e-5
-prams['T'] = 50000 * prams['dt']
+# prams['T'] = 50000 * prams['dt']
+prams['T'] = 100 * prams['dt']
 prams['kappa'] = 1.0
 prams['viscCont'] = torch.ones(prams['nv'])
 prams['gmresTol'] = 1e-10
@@ -194,6 +196,10 @@ if options['confined']:
 time_ = 0.0
 modes = torch.concatenate((torch.arange(0, prams['N'] // 2), torch.arange(-prams['N'] // 2, 0))).to(X.device) #.double()
 
+print("X shape: ", X.shape)
+print("sigma shape: ", sigma.shape)
+print("eta shape: ", eta.shape)
+print("RS shape: ", RS.shape)
 
 for step in tqdm(range(int(prams['T'] / prams['dt']))):
 

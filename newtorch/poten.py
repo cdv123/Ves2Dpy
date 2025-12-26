@@ -3,7 +3,7 @@ import numpy as np
 from fft1 import fft1
 from capsules import capsules
 from curve_batch_compile import Curve
-from filter import interpft_vec
+from tools.filter import interpft_vec
 import torch
 import torch.fft
 import math

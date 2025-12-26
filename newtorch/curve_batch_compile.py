@@ -9,7 +9,7 @@ torch.set_default_dtype(torch.float32)
 import torch.nn as nn
 import time
 # import cupy as cp
-from filter import interpft, upsample_fft
+from tools.filter import interpft, upsample_fft
 from typing import Tuple
 # from scipy.io import loadmat
 # import matlab.engine
