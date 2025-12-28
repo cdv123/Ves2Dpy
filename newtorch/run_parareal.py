@@ -10,6 +10,7 @@ from scipy.io import loadmat
 from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
 from parareal_vescicle import CoarseSolver, PararealSolver, FineSolver
+torch.set_default_dtype(torch.float64)
 
 def initVes2D(options=None, prams=None):
     """
