@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from tqdm import tqdm
 from filter import filterShape, interpft_vec
+print(torch.get_default_dtype())
 
 def initVes2D(options=None, prams=None):
     """
@@ -132,7 +133,7 @@ Xwalls = None
 # Xics = loadmat("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/ManyVesICsTaylorGreen/nv504IC.mat").get('X')
 # Xics = loadmat("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/ManyVesICsTaylorGreen/nv1020IC.mat").get('X')
 selected_four = [0, 5, 17, 22]  # Indices of the four vesicles to select
-Xics = loadmat("../VF25_TG32Ves.mat").get('X')[:, selected_four]
+Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get('X')[:, selected_four]
 # Xics = loadmat("../2000vesShape8_VF30.mat").get('X')
 # Xics = loadmat("../Nves_vs_dispersion_ICs/VF12_TG2220Ves.mat").get('X')[:, :2000]
 # Xics = np.load("TG_N32_dilute_last100_nv128.npy")[:, :, 0]
