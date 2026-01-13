@@ -25,7 +25,6 @@ class CoarseSolver:
             (torch.arange(0, params["N"] // 2), torch.arange(-params["N"] // 2, 0))
         ).to(initPositions.device)
 
-        print("Params:", self.params)
 
     def solve(self, initPositions: torch.Tensor, sigmaStore: torch.Tensor):
         print("Params:", self.params)
@@ -72,6 +71,8 @@ class FineSolver:
         sigmaStore: torch.Tensor,
         numCores: int,
     ):
+        print("Positions dtype", positions.dtype)
+        print("Positions prime dtype", positionsPrime.dtype)
         # Parallelize this
         for i in range(1, numCores + 1):
             positionsPrime[i] = self.solver.solve(positions[i - 1], sigmaStore[i - 1])
@@ -103,11 +104,11 @@ class PararealSolver:
         baseVesicles: torch.Tensor = self.initSerialSweep(self.initVesicles)
 
         latestVesicles: torch.Tensor = torch.empty(
-            self.numCores + 1, *self.initVesicles.shape, device=initVesicles.device
+            self.numCores + 1, *self.initVesicles.shape, device=initVesicles.device, dtype=torch.float32
         )
 
         parallelCorrections: torch.Tensor = torch.empty(
-            self.numCores + 1, *self.initVesicles.shape, device=initVesicles.device
+            self.numCores + 1, *self.initVesicles.shape, device=initVesicles.device, dtype=torch.float32
         )
 
         for k in range(pararealIter):
@@ -154,6 +155,8 @@ class PararealSolver:
         parallelCorrection: torch.Tensor,
         kIter: int,
     ):
+        print("Base vesicles dtype", baseVesicles.dtype)
+        print("Latest vesicles dtype", latestVesicles.dtype)
         print("Starting serial Sweep Correction")
         for n in range(kIter + 2, self.numCores + 1):
             latestVesicles[n] = parallelCorrection[n] + (

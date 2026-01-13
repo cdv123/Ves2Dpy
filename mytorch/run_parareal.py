@@ -124,7 +124,7 @@ X = interpft_vec(X, 128).to(device)
 prams['N'] = X.shape[0]//2
 prams['nv'] = X.shape[1]
 prams['dt'] = 1e-5
-prams['T'] = 4 * prams['dt']
+prams['T'] = 10 * prams['dt']
 prams['kappa'] = 1.0
 prams['viscCont'] = torch.ones(prams['nv'])
 prams['gmresTol'] = 1e-10
@@ -197,7 +197,7 @@ modes = torch.concatenate((torch.arange(0, prams['N'] // 2), torch.arange(-prams
 pararealSolver = PararealSolver(fineSolver=fineSolver, coarseSolver=coarseSolver)
 print("X dtype: ", X.dtype)
 print("sigma dtype: ", sigma.dtype)
-X = pararealSolver.pararealSolve(X, sigma, numCores, prams["T"], 1)
+X = pararealSolver.pararealSolve(X, sigma, 2, prams["T"], 5)
 
 output = np.concatenate(([time_], X.cpu().numpy().T.flatten())).astype('float64')
 with open(fileName, 'ab') as fid:
