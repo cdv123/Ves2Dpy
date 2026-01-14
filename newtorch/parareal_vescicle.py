@@ -1,5 +1,7 @@
 import torch
 
+# TODO add seperate prints for each level to make it clearer
+
 torch.set_default_dtype(torch.float32)
 from tstep_biem import TStepBiem
 from curve_batch_compile import Curve
@@ -12,6 +14,7 @@ class CoarseSolver:
         self.params = params
         self.Xwalls = Xwalls
         self.finalTime = finalTime
+        self.params["T"] = finalTime
         self.RS = torch.zeros(3, params["nvbd"])
         self.eta = torch.zeros(2 * params["Nbd"], params["nvbd"])
 
@@ -22,14 +25,19 @@ class CoarseSolver:
             (torch.arange(0, params["N"] // 2), torch.arange(-params["N"] // 2, 0))
         ).to(initPositions.device)
 
+        print("Params:", self.params)
+
     def solve(self, initPositions: torch.Tensor, sigmaStore: torch.Tensor):
+        print("Params:", self.params)
         positions = initPositions.clone()
         if self.options["confined"]:
             self.tt.initialConfined()
 
         num_steps = int(self.finalTime / self.params["dt"])
+        print("Number of steps:", num_steps)
 
-        for _ in range(num_steps):
+        for i in range(num_steps):
+            print("Simple solver step:", i)
             positionsNew, sigmaStore, self.eta, self.RS, _, _ = self.tt.time_step(
                 positions, sigmaStore, self.eta, self.RS
             )
@@ -55,7 +63,6 @@ class CoarseSolver:
 # Parallel solver for parareal
 class FineSolver:
     def __init__(self, options, params, Xwalls, finalTime, initPositions):
-        options["dt"] /= 10
         self.solver = CoarseSolver(options, params, Xwalls, finalTime, initPositions)
 
     def solve(
@@ -93,7 +100,11 @@ class PararealSolver:
             self.numCores + 1, *sigma.shape, device=sigma.device
         )
 
-        baseVesicles: torch.Tensor = self.initSerialSweep(self.initVesicles)
+        coarseSolutions: torch.Tensor = self.initSerialSweep(self.initVesicles)
+        newCoarseSolutions: torch.Tensor = torch.empty(
+            self.numCores + 1, *self.initVesicles.shape, device=initVesicles.device
+        )
+        latestVesicles = coarseSolutions.copy()
 
         latestVesicles: torch.Tensor = torch.empty(
             self.numCores + 1, *self.initVesicles.shape, device=initVesicles.device
@@ -104,33 +115,38 @@ class PararealSolver:
         )
 
         for k in range(pararealIter):
-            parallelCorrections = self.parallelSweep(baseVesicles, parallelCorrections)
-
-            latestVesicles[: k + 1] = baseVesicles[: k + 1]
-            latestVesicles[k + 1] = parallelCorrections[k + 1]
-
-            latestVesicles = self.serialSweepCorrection(
-                baseVesicles,
-                latestVesicles,
-                parallelCorrections,
-                k,
+            print("Parareal Iteration: ", k)
+            parallelCorrections = self.parallelSweep(
+                latestVesicles, parallelCorrections
             )
 
-            baseVesicles, latestVesicles = latestVesicles, baseVesicles
+            latestVesicles = self.serialSweepCorrection(
+                latestVesicles,
+                coarseSolutions,
+                newCoarseSolutions,
+                parallelCorrections,
+            )
 
-        return baseVesicles
+            newCoarseSolutions, coarseSolutions = coarseSolutions, newCoarseSolutions
+
+        return latestVesicles
 
     def initSerialSweep(
         self,
         initCondition: torch.Tensor,
     ) -> torch.Tensor:
+        print("Starting initial Serial Sweep")
         vesicleTimeSteps: torch.Tensor = torch.empty(
-            self.numCores + 1, *initCondition.shape, device=initCondition.device
+            self.numCores + 1,
+            *initCondition.shape,
+            device=initCondition.device,
+            dtype=torch.float32,
         )
 
         vesicleTimeSteps[0] = initCondition
 
         for i in range(self.numCores):
+            print(f"Iteration {i} in initial sweep")
             vesicleTimeSteps[i + 1] = self.coarseSolver.solve(
                 vesicleTimeSteps[i], self.sigmaStore[i]
             )
@@ -139,24 +155,25 @@ class PararealSolver:
 
     def serialSweepCorrection(
         self,
-        baseVesicles: torch.Tensor,
         latestVesicles: torch.Tensor,
+        previousCoarse: torch.Tensor,
+        newCoarse: torch.Tensor,
         parallelCorrection: torch.Tensor,
-        kIter: int,
     ):
-        for n in range(kIter + 2, self.numCores + 1):
-            latestVesicles[n] = parallelCorrection[n] + (
-                self.coarseSolver.solve(latestVesicles[n - 1], self.sigmaStore[n - 1])
-                - self.coarseSolver.solve(baseVesicles[n - 1], self.sigmaStore[n - 1])
+        print("Starting serial Sweep Correction")
+        for n in range(1, self.numCores + 1):
+            newCoarse[n] = self.coarseSolver.solve(
+                latestVesicles[n - 1], self.sigmaStore[n - 1]
             )
-
-        return latestVesicles
+            latestVesicles[n] = newCoarse[n] + parallelCorrection[n] - previousCoarse[n]
 
     def parallelSweep(
         self,
         inputVesicles: torch.Tensor,
         newVesicles: torch.Tensor,
     ) -> torch.Tensor:
+        print("Starting parallel sweep")
         return self.fineSolver.solve(
             inputVesicles, newVesicles, self.sigmaStore, self.numCores
         )
+
