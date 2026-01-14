@@ -197,7 +197,8 @@ modes = torch.concatenate((torch.arange(0, prams['N'] // 2), torch.arange(-prams
 pararealSolver = PararealSolver(fineSolver=fineSolver, coarseSolver=coarseSolver)
 print("X dtype: ", X.dtype)
 print("sigma dtype: ", sigma.dtype)
-X = pararealSolver.pararealSolve(X, sigma, 2, prams["T"], 5)
+pararealIter = 5
+X = pararealSolver.pararealSolve(X, sigma, 5, prams["T"], pararealIter)
 
 output = np.concatenate(([time_], X.cpu().numpy().T.flatten())).astype('float64')
 with open(fileName, 'ab') as fid:
