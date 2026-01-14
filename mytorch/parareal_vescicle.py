@@ -25,6 +25,8 @@ class CoarseSolver:
     def __init__(self, options, params, Xwalls, finalTime, initPositions):
         self.options = options
         params["T"] = finalTime
+        self.params = params
+        self.finalTime = finalTime
         self.RS = torch.zeros(3, params["nvbd"])
         self.eta = torch.zeros(2 * params["Nbd"], params["nvbd"])
 
@@ -35,7 +37,7 @@ class CoarseSolver:
             (torch.arange(0, params["N"] // 2), torch.arange(-params["N"] // 2, 0))
         ).to(initPositions.device)
 
-        print("Params:", self.params)
+        print("Params:", params)
 
     def solve(self, initPositions: torch.Tensor, sigmaStore: torch.Tensor):
         positions = initPositions.clone()
