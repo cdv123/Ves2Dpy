@@ -1,5 +1,6 @@
 import torch
 torch.set_default_dtype(torch.float32)
+from parareal_vescicle import CoarseSolver, PararealSolver, FineSolver
 import numpy as np
 from curve_batch_compile import Curve
 from capsules import capsules
@@ -9,8 +10,6 @@ import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
-from parareal_vescicle import CoarseSolver, PararealSolver, FineSolver
-torch.set_default_dtype(torch.float64)
 
 def initVes2D(options=None, prams=None):
     """
@@ -111,7 +110,8 @@ Xwalls = None
 # ------------------------------
 
 # Initial shape
-Xics = loadmat("../VF25_TG32Ves.mat").get('X')[:, :3]
+selected_four = [0, 5, 17, 22]
+Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_four]
 
 sigma = None
 X = torch.from_numpy(Xics).float().to(device)
@@ -124,7 +124,7 @@ X = interpft_vec(X, 128).to(device)
 prams['N'] = X.shape[0]//2
 prams['nv'] = X.shape[1]
 prams['dt'] = 1e-5
-prams['T'] = 50000 * prams['dt']
+prams['T'] = 30 * prams['dt']
 prams['kappa'] = 1.0
 prams['viscCont'] = torch.ones(prams['nv'])
 prams['gmresTol'] = 1e-10
@@ -169,9 +169,15 @@ with open(fileName, 'wb') as fid:
 print(prams)
 print(options)
 
-numCores = 5
-coarseSolver = CoarseSolver(options, prams, Xwalls, prams["T"]/numCores, X)
-fineSolver = FineSolver(options, prams, Xwalls, prams["T"]/numCores, X)
+sigma = torch.zeros(prams["N"], prams["nv"]) if sigma is None else sigma
+eta = torch.zeros(2 * prams["Nbd"], prams["nvbd"])
+RS = torch.zeros(3, prams["nvbd"])
+
+numCores = 2
+coarse_prams = prams.copy()
+coarse_prams["dt"]*=10
+coarseSolver = CoarseSolver(options, coarse_prams, Xwalls, prams["T"]/numCores, X)
+fineSolver = FineSolver(options, prams, Xwalls, prams["T"]/numCores, X, numCores)
 
 # ------------------------------
 # Display setup
@@ -189,7 +195,10 @@ time_ = 0.0
 modes = torch.concatenate((torch.arange(0, prams['N'] // 2), torch.arange(-prams['N'] // 2, 0))).to(X.device) #.double()
 
 pararealSolver = PararealSolver(fineSolver=fineSolver, coarseSolver=coarseSolver)
-X = pararealSolver.pararealSolve(X, sigma, numCores, prams["T"], 5)
+print("X dtype: ", X.dtype)
+print("sigma dtype: ", sigma.dtype)
+pararealIter = 5
+X = pararealSolver.pararealSolve(X, sigma, 5, prams["T"], pararealIter)
 
 output = np.concatenate(([time_], X.cpu().numpy().T.flatten())).astype('float64')
 with open(fileName, 'ab') as fid:
