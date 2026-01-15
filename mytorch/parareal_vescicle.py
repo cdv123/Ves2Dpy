@@ -5,7 +5,6 @@ from itertools import product, repeat
 torch.set_default_dtype(torch.float32)
 from tstep_biem import TStepBiem
 from curve_batch_compile import Curve
-import torch.multiprocessing as mp
 
 class PararealWorker:
     def __init__(self, positions, sigmaStore, outputPositions, solver):
@@ -83,10 +82,6 @@ class FineSolver:
         sigmaStore: torch.Tensor,
         numCores: int,
     ):
-        positions.share_memory_()
-        positionsPrime.share_memory_()
-        sigmaStore.share_memory_()
-        procs = []
         # Parallelize this
         for i in range(1, numCores + 1):
             positionsPrime[i] = self.solver.solve(positions[i-1], sigmaStore[i-1])

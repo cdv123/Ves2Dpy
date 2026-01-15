@@ -7,7 +7,7 @@ from capsules import capsules
 from poten import Poten
 from tools.filter import interpft_vec, interpft
 from biem_support import wrapper_allExactStokesSLTarget_compare2, naiveNearZoneInfo
-# import cupy as cp
+import cupy as cp
 if torch.cuda.is_available():
     from cupyx.scipy.sparse.linalg import gmres, LinearOperator
 else:
@@ -334,7 +334,7 @@ class TStepBiem:
         cupy_lin_op = LinearOperator((initGMRES.shape[0], initGMRES.shape[0]), gmres_func)
         torch.cuda.empty_cache()
         
-        counter = gmres_counter(disp=False)
+        counter = gmres_counter(disp=True)
 
         if self.usePreco:
             # print(f"gmres tol {self.gmresTol}")

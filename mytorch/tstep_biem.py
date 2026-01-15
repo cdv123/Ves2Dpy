@@ -7,7 +7,7 @@ from capsules import capsules
 from poten import Poten
 from filter import interpft_vec, interpft
 from biem_support import wrapper_allExactStokesSLTarget_compare2, naiveNearZoneInfo
-# import cupy as cp
+import cupy as cp
 if torch.cuda.is_available():
     from cupyx.scipy.sparse.linalg import gmres, LinearOperator
 else:
@@ -366,7 +366,7 @@ class TStepBiem:
         cupy_lin_op = LinearOperator((initGMRES.shape[0], initGMRES.shape[0]), gmres_func)
         torch.cuda.empty_cache()
         
-        counter = gmres_counter(disp=False)
+        counter = gmres_counter(disp=True)
 
         # start = torch.cuda.Event(enable_timing=True)
         # end = torch.cuda.Event(enable_timing=True)
@@ -490,8 +490,8 @@ class TStepBiem:
 
         SLP = lambda X: op.exactStokesSLdiag(vesicle, self.Galpert, X)
         # Fslp = op.nearSingInt(vesicle, f, SLP, self.NearV2V, op.exactStokesSL, vesicle, True)
-        Fslp, near = op.nearSingInt_hh(vesicle, f, SLP, self.NearV2V, wrapper_allExactStokesSLTarget_compare2, vesicle, True)
-        # Fslp = op.nearSingInt_rbf(vesicle, f, SLP, self.NearV2V, wrapper_allExactStokesSLTarget_compare2, vesicle, True)
+        # Fslp, near = op.nearSingInt_hh(vesicle, f, SLP, self.NearV2V, wrapper_allExactStokesSLTarget_compare2, vesicle, True)
+        Fslp = op.nearSingInt_rbf(vesicle, f, SLP, self.NearV2V, wrapper_allExactStokesSLTarget_compare2, vesicle, True)
         FSLPwall = op.nearSingInt(vesicle, f, SLP, self.NearV2W, op.exactStokesSL, walls, False) if self.confined else None
 
         Fdlp, FDLPwall = None, None

@@ -124,7 +124,7 @@ X = interpft_vec(X, 128).to(device)
 prams['N'] = X.shape[0]//2
 prams['nv'] = X.shape[1]
 prams['dt'] = 1e-5
-prams['T'] = 10 * prams['dt']
+prams['T'] = 60 * prams['dt']
 prams['kappa'] = 1.0
 prams['viscCont'] = torch.ones(prams['nv'])
 prams['gmresTol'] = 1e-10
@@ -173,7 +173,7 @@ sigma = torch.zeros(prams["N"], prams["nv"]) if sigma is None else sigma
 eta = torch.zeros(2 * prams["Nbd"], prams["nvbd"])
 RS = torch.zeros(3, prams["nvbd"])
 
-numCores = 1
+numCores = 5
 coarse_prams = prams.copy()
 coarse_prams["dt"]*=10
 coarseSolver = CoarseSolver(options, coarse_prams, Xwalls, prams["T"]/numCores, X)

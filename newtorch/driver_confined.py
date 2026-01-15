@@ -93,8 +93,8 @@ oc = Curve()  # You need to define this with required methods
 # ------------------------------
 prams = {}
 prams["Nbd"] = 32
-# prams['nvbd'] = 2
-prams["nvbd"] = 0
+prams['nvbd'] = 0
+# prams["nvbd"] = 0
 
 t = torch.linspace(0, 2 * torch.pi, prams["Nbd"])  # end_point = False
 rad1 = 1.0  # inner cylinder radius
@@ -111,8 +111,10 @@ Xwalls = None
 # ------------------------------
 
 # Initial shape
-selected_four = [0, 5, 17, 22]  # Indices of the four vesicles to select
-Xics = loadmat("../VF25_TG32Ves.mat").get("X")[:, selected_four]
+# selected_four = [0, 5, 7, 12]  # Indices of the four vesicles to select
+selected_one = [0]  # Indices of the four vesicles to select
+Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
+Xics = Xics - Xics.mean()
 
 sigma = None
 X = torch.from_numpy(Xics).float().to(device)
@@ -124,9 +126,9 @@ X = interpft_vec(X, 128).to(device)
 # ------------------------------
 prams["N"] = X.shape[0] // 2
 prams["nv"] = X.shape[1]
-prams["dt"] = 1e-5
+prams["dt"] = 1e-6
 # prams['T'] = 50000 * prams['dt']
-prams["T"] = 100 * prams["dt"]
+prams["T"] = 5000 * prams["dt"]
 prams["kappa"] = 1.0
 prams["viscCont"] = torch.ones(prams["nv"])
 prams["gmresTol"] = 1e-10
@@ -139,7 +141,7 @@ prams["repStrength"] = 1e5
 prams["minDist"] = 1.0 / 32
 
 options = {
-    "farField": "vortex",
+    "farField": "shear",
     "repulsion": False,
     "correctShape": True,
     "reparameterization": True,
@@ -199,6 +201,8 @@ time_ = 0.0
 modes = torch.concatenate(
     (torch.arange(0, prams["N"] // 2), torch.arange(-prams["N"] // 2, 0))
 ).to(X.device)  # .double()
+print("GMRES max iter:", prams["gmresMaxIter"])
+print("is cuda available:", torch.cuda.is_available())
 
 print("X shape: ", X.shape)
 print("sigma shape: ", sigma.shape)
