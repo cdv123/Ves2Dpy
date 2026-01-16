@@ -85,6 +85,7 @@ class WorkerState:
 # Runs multiple serial solvers independently
 class ParallelSolver:
     def __init__(self, options, params, Xwalls, initPositions, sigmaStore, numCores):
+        self.params = params.copy()
         self.numCores = numCores
         gpu_ids = list(range(torch.cuda.device_count()))
 
