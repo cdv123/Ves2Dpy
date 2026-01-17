@@ -68,17 +68,20 @@ class WorkerState:
         torch.cuda.set_device(gpu_id)
         self.device = gpu_id
 
-        self.sigmaStore = torch.Tensor(sigmaShape)
-        self.positions = torch.Tensor(positionsShape)
+        self.sigmaStore = torch.zeros(sigmaShape, dtype=torch.float64, device=self.device)
         self.params = params
         self.options = options
-        self.Xwalls = Xwalls
+        self.Xwalls = Xwalls.to(device) if Xwalls else None
 
     def run_solver(self, initPositions):
-        self.solver = BIEMSolver(self.options, self.params, self.Xwalls, initPositions)
-        self.positions = initPositions.to(self.device)
+        positions = initPositions.to(self.device)
+        print("Positions Shape", positions.shape)
+        print("sigma Shape", self.sigmaStore.shape)
+        print("POSITIONS DEVICE", positions.device)
+        print("SIGMA DEVICE", self.sigmaStore.device)
+        self.solver = BIEMSolver(self.options, self.params, self.Xwalls, positions)
 
-        return self.solver.solve(self.positions, self.sigmaStore)
+        return self.solver.solve(positions, self.sigmaStore)
 
 
 # Parallel solver for parareal
@@ -93,7 +96,7 @@ class ParallelSolver:
             raise ValueError("Not enough GPUs")
 
         self.setupProcPool_(
-            gpu_ids, options, params, Xwalls, initPositions.shape, sigmaStore.shape
+            gpu_ids, params, options, Xwalls, initPositions.shape, sigmaStore.shape
         )
 
     def setupProcPool_(
@@ -128,6 +131,10 @@ class ParallelSolver:
     def init_worker(gpu_queue, params, options, Xwalls, positionsShape, sigmaShape):
         gpu_id = gpu_queue.get()
         global _worker
+        print("Process OPTIONS:", options)
+        print("Process PARAMS:", params)
+        print("Positions Shape", positionsShape)
+        print("sigma Shape", positionsShape)
         _worker = WorkerState(
             gpu_id, params, options, Xwalls, positionsShape, sigmaShape
         )
@@ -135,18 +142,20 @@ class ParallelSolver:
     @staticmethod
     def run_worker(initPositions):
         global _worker
-        return _worker.run_solver(initPositions)
+        return _worker.run_solver(initPositions).cpu()
 
     def solve(
         self, positions: torch.Tensor, positionsPrime: torch.Tensor, numCores: int
     ):
-        inputs = [positions[i - 1] for i in range(1, numCores + 1)]
+        self.device = positions.device
+        inputs = [positions[i - 1].cpu() for i in range(1, numCores + 1)]
         results = self.pool.map(ParallelSolver.run_worker, inputs)
 
         for i, out in enumerate(results, start=1):
-            positionsPrime[i] = out
+            positionsPrime[i] = out.to(self.device)
 
         return positionsPrime
 
     def close(self):
         self.pool.close()
+        self.pool.join()

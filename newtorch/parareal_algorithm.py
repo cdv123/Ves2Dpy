@@ -18,7 +18,7 @@ class PararealSolver:
         self.numCores = numCores
         self.initVesicles = initVesicles
 
-        self.sigmaStore: torch.Tensor = torch.empty(
+        self.sigmaStore: torch.Tensor = torch.zeros(
             self.numCores + 1, *sigma.shape, device=sigma.device
         )
 
@@ -28,13 +28,10 @@ class PararealSolver:
         )
         latestVesicles = coarseSolutions.clone()
 
-        latestVesicles: torch.Tensor = torch.empty(
-            self.numCores + 1, *self.initVesicles.shape, device=initVesicles.device
-        )
-
         parallelCorrections: torch.Tensor = torch.empty(
             self.numCores + 1, *self.initVesicles.shape, device=initVesicles.device
         )
+
 
         for k in range(pararealIter):
             print("Parareal Iteration: ", k)
@@ -50,8 +47,6 @@ class PararealSolver:
             )
 
             newCoarseSolutions, coarseSolutions = coarseSolutions, newCoarseSolutions
-
-        self.parallelSolver.close()
 
         return latestVesicles
 
@@ -98,5 +93,5 @@ class PararealSolver:
     ) -> torch.Tensor:
         print("Starting parallel sweep")
         return self.parallelSolver.solve(
-            inputVesicles, newVesicles, self.sigmaStore, self.numCores
+            inputVesicles, newVesicles, self.numCores
         )

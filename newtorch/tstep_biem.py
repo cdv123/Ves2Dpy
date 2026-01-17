@@ -183,6 +183,9 @@ class TStepBiem:
         """
         Advances the solution one timestep using implicit vesicle-vesicle interactions.
         """
+        print("Xstore device", Xstore.device) 
+        print("sigStore device", sigStore.device) 
+        print("Current default device", torch.cuda.current_device())
         vesicle = capsules(Xstore, sigStore, None, self.kappa, self.viscCont)
 
         N = Xstore.shape[0] // 2  # Number of points per vesicle
