@@ -57,8 +57,6 @@ class Poten:
         ysou = y[None, :] #.repeat(vesicleUp.N, 1, 1)
 
         # Apply circular shift using self.Rfor
-        print("XSOU device", xsou.device)
-        print("Rfor device", xsou.device)
         xsou = xsou.reshape(-1, vesicle.nv)[self.Rfor % self.Nup].reshape(self.Nup, self.Nup, vesicle.nv)
         diffx = xtar.permute(2,0,1) - torch.matmul(self.qp[None, :], xsou.permute(2, 0, 1))
         del xsou

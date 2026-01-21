@@ -19,8 +19,8 @@ class gmres_counter(object):
         self.niter = 0
     def __call__(self, rk=None):
         self.niter += 1
-        if self._disp:
-            print('iter %3i\trk = %s' % (self.niter, str(rk)))
+        #if self._disp:
+        #    print('iter %3i\trk = %s' % (self.niter, str(rk)))
 
 class TStepBiem:
     """
@@ -183,10 +183,8 @@ class TStepBiem:
         """
         Advances the solution one timestep using implicit vesicle-vesicle interactions.
         """
-        print("Xstore device", Xstore.device) 
-        print("sigStore device", sigStore.device) 
-        print("Current default device", torch.cuda.current_device())
         vesicle = capsules(Xstore, sigStore, None, self.kappa, self.viscCont)
+        # print("After vesicle", torch.cuda.memory_allocated())
 
         N = Xstore.shape[0] // 2  # Number of points per vesicle
         nv = Xstore.shape[1]      # Number of vesicles
@@ -202,6 +200,7 @@ class TStepBiem:
         # Build single-layer potential matrix
         op = self.op
         self.Galpert = op.stokesSLmatrix(vesicle)
+        # print("After galpert", torch.cuda.memory_allocated())
 
         # Double-layer potential matrix (if viscosity contrast)
         self.D = []
@@ -349,7 +348,8 @@ class TStepBiem:
         else:
             Xn, info = gmres(cupy_lin_op, rhs, tol=self.gmresTol, maxiter=self.gmresMaxIter)
 
-        print(f"gmres takes {counter.niter} iterations")
+        #print(f"gmres takes {counter.niter} iterations")
+        #print("After gmres", torch.cuda.memory_allocated())
 
         iflag = info != 0
         iter = counter.niter

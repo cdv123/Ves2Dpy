@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
+from torch.profiler import profile, ProfilerActivity
 
 
 def initVes2D(options=None, prams=None):
@@ -78,8 +79,10 @@ def initVes2D(options=None, prams=None):
 
     return options, prams
 
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+if torch.cuda.is_available():
+    torch.set_default_device("cuda")
 
 
 fileName = "./output_BIEM/shear.bin"  # To save simulation data
@@ -111,14 +114,11 @@ Xwalls = None
 # ------------------------------
 
 # Initial shape
-# selected_four = [0, 5, 7, 12]  # Indices of the four vesicles to select
-selected_one = [0]  # Indices of the four vesicles to select
-Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
-Xics = Xics - Xics.mean()
+Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get("X")
 
 sigma = None
 X = torch.from_numpy(Xics).float().to(device)
-X = interpft_vec(X, 128).to(device)
+X = interpft_vec(X, 32).to(device)
 
 
 # ------------------------------
@@ -128,7 +128,7 @@ prams["N"] = X.shape[0] // 2
 prams["nv"] = X.shape[1]
 prams["dt"] = 1e-6
 # prams['T'] = 50000 * prams['dt']
-prams["T"] = 5000 * prams["dt"]
+prams["T"] = 20 * prams["dt"]
 prams["kappa"] = 1.0
 prams["viscCont"] = torch.ones(prams["nv"])
 prams["gmresTol"] = 1e-10
@@ -212,6 +212,9 @@ print("RS shape: ", RS.shape)
 for step in tqdm(range(int(prams["T"] / prams["dt"]))):
     # Perform time step
     Xnew, sigma, eta, RS, iter_, iflag = tt.time_step(X, sigma, eta, RS)
+    sigma = torch.zeros(prams["N"], prams["nv"]) if sigma is None else sigma
+    eta = torch.zeros(2 * prams["Nbd"], prams["nvbd"])
+    RS = torch.zeros(3, prams["nvbd"])
 
     if options["reparameterization"]:
         # Redistribute arc-length

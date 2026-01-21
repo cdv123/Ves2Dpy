@@ -13,6 +13,7 @@ class PararealSolver:
         numCores: int,
         endTime: float,
         pararealIter: int,
+        file_name = None
     ) -> torch.Tensor:
         self.endTime = endTime
         self.numCores = numCores
@@ -47,6 +48,10 @@ class PararealSolver:
             )
 
             newCoarseSolutions, coarseSolutions = coarseSolutions, newCoarseSolutions
+
+        if file_name is not None:
+            print("Writing solution")
+            self.parallelSweep(latestVesicles, parallelCorrections, file_name)
 
         return latestVesicles
 
@@ -90,8 +95,9 @@ class PararealSolver:
         self,
         inputVesicles: torch.Tensor,
         newVesicles: torch.Tensor,
+        file_name = None
     ) -> torch.Tensor:
         print("Starting parallel sweep")
         return self.parallelSolver.solve(
-            inputVesicles, newVesicles, self.numCores
+            inputVesicles, newVesicles, self.numCores, file_name
         )

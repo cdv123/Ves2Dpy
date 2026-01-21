@@ -84,8 +84,9 @@ def initVes2D(options=None, prams=None):
     return options, prams
 
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+    if torch.cuda.is_available():
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        torch.set_default_device("cuda")
     
     fileName = "./output_BIEM/shear.bin"  # To save simulation data
     
@@ -116,7 +117,7 @@ if __name__ == "__main__":
     # ------------------------------
     
     # Initial shape
-    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, :3]
+    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
     
     sigma = None
     X = torch.from_numpy(Xics).float().to(device)
@@ -129,7 +130,7 @@ if __name__ == "__main__":
     prams["N"] = X.shape[0] // 2
     prams["nv"] = X.shape[1]
     prams["dt"] = 1e-5
-    prams["T"] = 20 * prams["dt"]
+    prams["T"] = 1500 * prams["dt"]
     prams["kappa"] = 1.0
     prams["viscCont"] = torch.ones(prams["nv"])
     prams["gmresTol"] = 1e-10
@@ -193,7 +194,7 @@ if __name__ == "__main__":
         (torch.arange(0, prams["N"] // 2), torch.arange(-prams["N"] // 2, 0))
     ).to(X.device)  # .double()
     
-    numCores = 1
+    numCores = 6
     prams["T"] /= numCores
     coarse_prams = prams.copy()
     
@@ -205,13 +206,10 @@ if __name__ == "__main__":
     
     
     pararealSolver = PararealSolver(
-        parallelSolver=parallelSolver, coarseSolver=coarseSolver
-    )
+        parallelSolver=parallelSolver, coarseSolver=coarseSolver)
     X = pararealSolver.pararealSolve(
-        initVesicles=X, sigma=sigma, numCores=numCores, endTime=prams["T"], pararealIter=5
+        initVesicles=X, sigma=sigma, numCores=numCores, endTime=prams["T"], pararealIter=2, file_name=fileName
     )
     parallelSolver.close()
     
     output = np.concatenate(([time_], X.cpu().numpy().T.flatten())).astype("float64")
-    with open(fileName, "ab") as fid:
-        output.tofile(fid)

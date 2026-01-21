@@ -1,12 +1,12 @@
 import torch
+import os
 from typing import Optional
 import torch.multiprocessing as mp
-
-# TODO add seperate prints for each level to make it clearer
 
 torch.set_default_dtype(torch.float32)
 from tstep_biem import TStepBiem
 from curve_batch_compile import Curve
+import numpy as np
 
 _worker: Optional["WorkerState"] = None
 
@@ -17,6 +17,8 @@ class BIEMSolver:
         self.options = options
         self.params = params
         self.Xwalls = Xwalls
+        print("Params", self.params)
+        print("options", self.options)
         self.finalTime = self.params["T"]
         self.RS = torch.zeros(3, params["nvbd"])
         self.eta = torch.zeros(2 * params["Nbd"], params["nvbd"])
@@ -28,10 +30,8 @@ class BIEMSolver:
             (torch.arange(0, params["N"] // 2), torch.arange(-params["N"] // 2, 0))
         ).to(initPositions.device)
 
-        print("Params:", self.params)
 
-    def solve(self, initPositions: torch.Tensor, sigmaStore: torch.Tensor):
-        print("Params:", self.params)
+    def solve(self, initPositions: torch.Tensor, sigmaStore: torch.Tensor, out_file_name = None, start_time = 0):
         positions = initPositions.clone()
         if self.options["confined"]:
             self.tt.initial_confined()
@@ -40,7 +40,7 @@ class BIEMSolver:
         print("Number of steps:", num_steps)
 
         for i in range(num_steps):
-            print("Simple solver step:", i)
+            start_time += self.params["dt"]
             positionsNew, sigmaStore, self.eta, self.RS, _, _ = self.tt.time_step(
                 positions, sigmaStore, self.eta, self.RS
             )
@@ -60,6 +60,12 @@ class BIEMSolver:
                     positions.float(), self.area0, self.len0
                 )
 
+            if out_file_name is not None:
+                output = np.concatenate(([start_time], positions.cpu().numpy().T.flatten())).astype("float64")
+
+                with open(out_file_name, "ab") as fid:
+                    output.tofile(fid)
+
         return positions
 
 
@@ -67,21 +73,19 @@ class WorkerState:
     def __init__(self, gpu_id, params, options, Xwalls, positionsShape, sigmaShape):
         torch.cuda.set_device(gpu_id)
         self.device = gpu_id
+        torch.set_default_device(f"cuda:{self.device}")
 
         self.sigmaStore = torch.zeros(sigmaShape, dtype=torch.float64, device=self.device)
         self.params = params
+        self.params["viscCont"] = self.params["viscCont"].to(self.device)
         self.options = options
         self.Xwalls = Xwalls.to(device) if Xwalls else None
 
-    def run_solver(self, initPositions):
+    def run_solver(self, initPositions, file_name, start_time):
         positions = initPositions.to(self.device)
-        print("Positions Shape", positions.shape)
-        print("sigma Shape", self.sigmaStore.shape)
-        print("POSITIONS DEVICE", positions.device)
-        print("SIGMA DEVICE", self.sigmaStore.device)
         self.solver = BIEMSolver(self.options, self.params, self.Xwalls, positions)
 
-        return self.solver.solve(positions, self.sigmaStore)
+        return self.solver.solve(positions, self.sigmaStore, file_name, start_time)
 
 
 # Parallel solver for parareal
@@ -131,28 +135,57 @@ class ParallelSolver:
     def init_worker(gpu_queue, params, options, Xwalls, positionsShape, sigmaShape):
         gpu_id = gpu_queue.get()
         global _worker
-        print("Process OPTIONS:", options)
-        print("Process PARAMS:", params)
-        print("Positions Shape", positionsShape)
-        print("sigma Shape", positionsShape)
         _worker = WorkerState(
             gpu_id, params, options, Xwalls, positionsShape, sigmaShape
         )
 
     @staticmethod
-    def run_worker(initPositions):
+    def run_worker(initPositions, file_name = None, start_time = 0):
         global _worker
-        return _worker.run_solver(initPositions).cpu()
+        return _worker.run_solver(initPositions, file_name, start_time).cpu()
+
+    def _shutdown_pool(self):
+        if self.pool is None:
+            return
+
+        self.pool.terminate()
+        self.pool.join()
+        self.pool = None
+
 
     def solve(
-        self, positions: torch.Tensor, positionsPrime: torch.Tensor, numCores: int
-    ):
+            self, positions: torch.Tensor, positionsPrime: torch.Tensor, 
+            numCores: int, file_name: str = None
+        ):
         self.device = positions.device
         inputs = [positions[i - 1].cpu() for i in range(1, numCores + 1)]
-        results = self.pool.map(ParallelSolver.run_worker, inputs)
+        if file_name is not None:
+            file_names = [f"file_name_{i}" for i in range(numCores)]
+            start_times = [self.params["T"]*i for i in range(numCores)]
+        try:
+            if file_name is not None:
+                results = self.pool.starmap(ParallelSolver.run_worker, zip(inputs, file_names, start_times))
+            else:
+                results = self.pool.map(ParallelSolver.run_worker, inputs)
+        except:
+            self._shutdown_pool()
+            raise
 
         for i, out in enumerate(results, start=1):
             positionsPrime[i] = out.to(self.device)
+
+        if file_name is not None:
+            for file in file_names:
+                CHUNK_SIZE = 1024*1024
+                print("Writing to file")
+
+                with open(file, "rb") as infile, open(file_name, "ab") as outfile:
+                    while True:
+                        chunk = infile.read(CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        outfile.write(chunk)
+                os.remove(file)
 
         return positionsPrime
 
