@@ -15,7 +15,7 @@ import time
 from scipy.io import loadmat
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from filter import interpft, interpft_vec
+from tools.filter import interpft, interpft_vec
 import logging
 from poten import Poten
 
@@ -92,7 +92,7 @@ rbf_upsample = -1
 # Xics = np.load("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/48vesTG_N32.npy") ### INIT SHAPES FROM THE DATA SET
 # Xics = loadmat("../48vesiclesInTG_N128.mat").get('Xic') ### INIT SHAPES FROM THE DATA SET
 # Xics = loadmat("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/ManyVesICsTaylorGreen/nv504IC.mat").get('X')
-Xics = loadmat("../Nves_vs_dispersion_ICs/VF25_TG128Ves.mat").get('X')[:, :]
+Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get('X')[:, :]
 # Xics = init_data.get('Xic')
 # Xics = np.load("TG_new_start.npy")
 # Xics = loadmat("../3VesNearCheck.mat").get("X")

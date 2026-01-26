@@ -7,8 +7,8 @@ sys.path.append("..")
 import pdb
 from collections import defaultdict
 from capsules import capsules
-from filter import filterShape, filterTension, interpft, interpft_vec, upsample_fft, downsample_fft, gaussian_filter_shape, gaussian_filter_1d_energy_preserve
-from filter import rescale_outlier_vel, rescale_outlier_vel_abs, rescale_outlier_trans
+from tools.filter import filterShape, filterTension, interpft, interpft_vec, upsample_fft, downsample_fft, gaussian_filter_shape, gaussian_filter_1d_energy_preserve
+from tools.filter import rescale_outlier_vel, rescale_outlier_vel_abs, rescale_outlier_trans
 from torch.profiler import profile, record_function, ProfilerActivity
 from model_zoo.get_network_torch import RelaxNetwork, TenSelfNetwork, MergedAdvNetwork, MergedTenAdvNetwork, MergedNearFourierNetwork
 # from relaxation_solve import relax_solve

@@ -82,7 +82,7 @@ def initVes2D(options=None, prams=None):
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-fileName = "./output_BIEM/shear.bin"  # To save simulation data
+fileName = "./output_BIEM/ground_truth.bin"  # To save simulation data
 
 
 # Assume oc is your geometry utility class (like curve_py in MATLAB)
@@ -126,9 +126,9 @@ X = interpft_vec(X, 128).to(device)
 # ------------------------------
 prams["N"] = X.shape[0] // 2
 prams["nv"] = X.shape[1]
-prams["dt"] = 1e-6
+prams["dt"] = 1e-5
 # prams['T'] = 50000 * prams['dt']
-prams["T"] = 5000 * prams["dt"]
+prams["T"] = 1000 * prams["dt"]
 prams["kappa"] = 1.0
 prams["viscCont"] = torch.ones(prams["nv"])
 prams["gmresTol"] = 1e-10

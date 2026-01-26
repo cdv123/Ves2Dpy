@@ -118,7 +118,7 @@ Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get("X")
 
 sigma = None
 X = torch.from_numpy(Xics).float().to(device)
-X = interpft_vec(X, 32).to(device)
+X = interpft_vec(X, 128).to(device)
 
 
 # ------------------------------
@@ -128,7 +128,7 @@ prams["N"] = X.shape[0] // 2
 prams["nv"] = X.shape[1]
 prams["dt"] = 1e-6
 # prams['T'] = 50000 * prams['dt']
-prams["T"] = 20 * prams["dt"]
+prams["T"] = 200 * prams["dt"]
 prams["kappa"] = 1.0
 prams["viscCont"] = torch.ones(prams["nv"])
 prams["gmresTol"] = 1e-10
