@@ -117,9 +117,7 @@ if __name__ == "__main__":
     # ------------------------------
     
     # Initial shape
-    selected_vesicle = [0]
-    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_vesicle]
-    Xics = Xics - Xics.mean()
+    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
     
     sigma = None
     X = torch.from_numpy(Xics).float().to(device)
@@ -196,7 +194,7 @@ if __name__ == "__main__":
         (torch.arange(0, prams["N"] // 2), torch.arange(-prams["N"] // 2, 0))
     ).to(X.device)  # .double()
     
-    numCores = 5
+    numCores = 1
     prams["T"] /= numCores
     coarse_prams = prams.copy()
     

@@ -86,7 +86,6 @@ class TStepBiem:
         # class for evaluating potential so that we don't have
         # to keep building quadrature matrices
         self.op = Poten(prams['N'])
-        print(type(self.op))
 
         # use block-diagonal preconditioner?
         self.usePreco = options['usePreco']

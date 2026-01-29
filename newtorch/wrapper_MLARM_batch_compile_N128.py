@@ -15,6 +15,7 @@ from model_zoo.get_network_torch import RelaxNetwork, TenSelfNetwork, MergedAdvN
 from math import ceil, sqrt
 from typing import List, Tuple
 from biem_support import exactStokesSL_onlyself
+torch.set_default_dtype(torch.float32)
 
 def relax_solve(X,  op):
     device = X.device
@@ -441,6 +442,18 @@ def allExactStokesSLTarget_compare1(vesicleX, vesicle_sa, f, tarX, length:float=
     
     N, nv = vesicleX.shape[0]//2, vesicleX.shape[1]
     Ntar, ntar = tarX.shape[0]//2, tarX.shape[1]
+
+    if nv <= 1:
+        # No other vesicles → no interactions
+        stokesSLPtar = torch.zeros(
+            (2 * Ntar, ntar),
+            dtype=tarX.dtype,
+            device=vesicleX.device,
+        )
+
+        empty = torch.empty(0, dtype=torch.long, device=vesicleX.device)
+        return stokesSLPtar, (empty, empty, empty)
+
     stokesSLPtar = torch.zeros((2 * Ntar, ntar), dtype=tarX.dtype, device=vesicleX.device)
 
     mask = ~torch.eye(nv, dtype=torch.bool, device=vesicleX.device)
@@ -554,6 +567,17 @@ def allExactStokesSLTarget_compare2(vesicleX, vesicle_sa, f, tarX, ids0, ids1, i
     
     N, nv = vesicleX.shape[0]//2, vesicleX.shape[1]
     Ntar, ntar = tarX.shape[0]//2, tarX.shape[1]
+
+    if nv <= 1:
+        # No other vesicles → no interactions
+        stokesSLPtar = torch.zeros(
+            (2 * Ntar, ntar),
+            dtype=tarX.dtype,
+            device=vesicleX.device,
+        )
+
+        return stokesSLPtar
+
     stokesSLPtar = torch.zeros((2 * Ntar, ntar), dtype=vesicleX.dtype, device=vesicleX.device)
 
     mask = ~torch.eye(nv, dtype=torch.bool, device=vesicleX.device)
@@ -674,7 +698,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         self.advNetOutputNorm = advNetOutputNorm
         self.mergedAdvNetwork = MergedAdvNetwork(self.advNetInputNorm.to(device), self.advNetOutputNorm.to(device), 
                                 # model_path="../trained/2024Oct_ves_merged_adv.pth", 
-                                model_path="../trained/torch_script_models/2024Oct_ves_merged_adv.pt", 
+                                model_path="/cosma/home/do022/dc-dubo2/vesicle-fork/latest_128/2024Oct_advection/2024Oct_ves_merged_adv.pth", 
                                 device = device)
                             
         # Normalization values for relaxation network
@@ -682,7 +706,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         self.relaxNetOutputNorm = relaxNetOutputNorm
         self.relaxNetwork = RelaxNetwork(self.dt, self.relaxNetInputNorm.to(device), self.relaxNetOutputNorm.to(device), 
                                 # model_path="../trained/ves_relax_DIFF_June8_625k_dt1e-5.pth", 
-                                model_path="../trained/torch_script_models/ves_relax_DIFF_June8_625k_dt1e-5.pt", 
+                                model_path="../../latest_128/relax/ves_relax_DIFF_June8_625k_dt1e-5.pth", 
                                 device = device)
         
         # Normalization values for near field networks
@@ -690,7 +714,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         self.nearNetOutputNorm = nearNetOutputNorm
         self.nearNetwork = MergedNearFourierNetwork(self.nearNetInputNorm.to(device), self.nearNetOutputNorm.to(device),
                                 # model_path="../trained/ves_merged_disth_nearFourier.pth",
-                                model_path="../trained/torch_script_models/ves_merged_disth_nearFourier.pt",
+                                model_path="../../latest_128/nearFourier_dist_h/ves_merged_disth_nearFourier.pth",
                                 device = device)
         
         # Normalization values for tension-self network
@@ -698,7 +722,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         self.tenSelfNetOutputNorm = tenSelfNetOutputNorm
         self.tenSelfNetwork = TenSelfNetwork(self.tenSelfNetInputNorm.to(device), self.tenSelfNetOutputNorm.to(device), 
                                 # model_path = "../trained/Ves_2024Oct_selften_12blks_loss_0.00566cuda1.pth",
-                                model_path = "../trained/torch_script_models/Ves_2024Oct_selften_12blks_loss_0.00566cuda1.pt",
+                                model_path = "../../latest_128/self_ten/ves_selften_2024Oct.pth",
                                 device = device)
         
         # Normalization values for tension-advection networks
@@ -706,7 +730,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         self.tenAdvNetOutputNorm = tenAdvNetOutputNorm
         self.tenAdvNetwork = MergedTenAdvNetwork(self.tenAdvNetInputNorm.to(device), self.tenAdvNetOutputNorm.to(device), 
                                 # model_path="../trained/2024Oct_ves_merged_advten.pth", 
-                                model_path="../trained/torch_script_models/2024Oct_ves_merged_advten.pt", 
+                                model_path="../../latest_128/adv_ten/2024Oct_ves_merged_advten.pth", 
                                 device = device)
         
     
@@ -1265,7 +1289,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         # vesicleUp = capsules(Xup, None, None, vesicle.kappa, vesicle.viscCont)
         oc = self.oc
-        dlayer = torch.linspace(0, 1/N, nlayers, dtype=torch.float64, device=Xold.device)
+        dlayer = torch.linspace(0, 1/N, nlayers, dtype=torch.float32, device=Xold.device)
         _, tang = oc.diffProp_jac_tan(Xup)
         rep_nx = tang[Nup:, :, None].expand(-1,-1,nlayers-1)
         rep_ny = -tang[:Nup, :, None].expand(-1,-1,nlayers-1)
@@ -1828,8 +1852,8 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         fstandRe = torch.real(zh)
         fstandIm = torch.imag(zh)
 
-        velx_stand_ = torch.einsum('vnml, mv -> nvl', velx_real.double(), fstandRe) + torch.einsum('vnml, mv -> nvl', velx_imag.double(), fstandIm)
-        vely_stand_ = torch.einsum('vnml, mv -> nvl', vely_real.double(), fstandRe) + torch.einsum('vnml, mv -> nvl', vely_imag.double(), fstandIm)
+        velx_stand_ = torch.einsum('vnml, mv -> nvl', velx_real, fstandRe) + torch.einsum('vnml, mv -> nvl', velx_imag, fstandIm)
+        vely_stand_ = torch.einsum('vnml, mv -> nvl', vely_real, fstandRe) + torch.einsum('vnml, mv -> nvl', vely_imag, fstandIm)
         
         vx_ = torch.zeros((nv, nlayers, N), device=tracJump.device, dtype=tracJump.dtype)
         vy_ = torch.zeros((nv, nlayers, N), device=tracJump.device, dtype=tracJump.dtype)
@@ -1839,7 +1863,9 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         VelBefRot_ = torch.concat((vx_, vy_), dim=-1) # (nv, nlayers, 2N)
         VelRot_ = self.rotationOperator(VelBefRot_.reshape(-1, 2*N).T, 
-                        torch.repeat_interleave(-rotate, nlayers, dim=0), torch.zeros(nv * nlayers))
+                        torch.repeat_interleave(-rotate, nlayers, dim=0), torch.zeros(2, nv))
+        #VelRot_ = self.rotationOperator(VelBefRot_.reshape(-1, 2*N).T, 
+        #         torch.repeat_interleave(-rotate, nlayers, dim=0), torch.zeros(nv * nlayers))
         VelRot_ = VelRot_.T.reshape(nv, nlayers, 2*N).permute(2,1,0)
         velx_ = VelRot_[:N] # (N, nlayers, nv)
         vely_ = VelRot_[N:]
@@ -2703,7 +2729,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         # vesicleUp = capsules(Xup, None, None, vesicle.kappa, vesicle.viscCont)
         oc = self.oc
-        dlayer = torch.linspace(0, 1/N, nlayers, dtype=torch.float64, device=Xsou.device)
+        dlayer = torch.linspace(0, 1/N, nlayers, dtype=torch.float32, device=Xsou.device)
         _, tang = oc.diffProp_jac_tan(Xup)
         rep_nx = tang[Nup:, :, None].expand(-1,-1,nlayers-1)
         rep_ny = -tang[:Nup, :, None].expand(-1,-1,nlayers-1)
@@ -3683,7 +3709,9 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         # tenPredictStand = tenPredictStand #.double()
         tenPred = torch.zeros((N, nv), dtype=Xstand.dtype, device=Xstand.device)
         
-        tenPred[sortIdx.T, torch.arange(nv, device=Xstand.device)] = tenPredictStand / scaling**2
+        # tenPred[sortIdx.T, torch.arange(nv, device=Xstand.device)] = tenPredictStand / scaling**2
+        col = torch.arange(nv, device=Xstand.device).unsqueeze(0).expand(sortIdx.shape[0], -1)
+        tenPred[sortIdx, col] = tenPredictStand / scaling**2
 
         return tenPred
 

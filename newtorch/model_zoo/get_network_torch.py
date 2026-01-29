@@ -25,8 +25,8 @@ class RelaxNetwork:
     
     def loadModel(self, model_path):
         model = pdeNet_Ves_factor_periodic(14, 2.9)
-        # model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
-        model = torch.jit.load(model_path, map_location=self.device)
+        model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
+        #model = torch.jit.load(model_path, map_location=self.device)
         model.to(self.device)
         # model_scripted = torch.jit.script(model) # Export to TorchScript
         # model_scripted.save("../trained/torch_script_models/ves_relax_DIFF_June8_625k_dt1e-5.pt")
@@ -123,8 +123,8 @@ class MergedAdvNetwork:
         # torch.save(model.state_dict(), "../trained/2024Oct_ves_merged_adv.pth")
 
         model = Net_merge_advection(12, 1.7, 20, rep=127)
-        # model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
-        model = torch.jit.load(model_path, map_location=self.device)
+        model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
+        # model = torch.jit.load(model_path, map_location=self.device)
         # model.load_state_dict(torch.load("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy/trained/2024Oct_ves_merged_adv.pth"))
         # model_scripted = torch.jit.script(model) # Export to TorchScript
         # model_scripted.save("../trained/torch_script_models/2024Oct_ves_merged_adv.pt")
@@ -217,11 +217,11 @@ class TenSelfNetwork:
     
     def loadModel(self, model_path):
         model = Net_ves_selften(12, 2.4, 26)
-        # model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
-        # model.to(self.device)
+        model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
+        model.to(self.device)
         # model_scripted = torch.jit.script(model) # Export to TorchScript
         # model_scripted.save("../trained/torch_script_models/Ves_2024Oct_selften_12blks_loss_0.00566cuda1.pt")
-        model = torch.jit.load(model_path, map_location=self.device)
+        # model = torch.jit.load(model_path, map_location=self.device)
         
         model.eval()
         return model
@@ -318,10 +318,10 @@ class MergedTenAdvNetwork:
 
         model = Net_ves_merge_advten(12, 2.5, 24, rep=127)
         # model.load_state_dict(torch.load("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy/trained/ves_merged_advten.pth"))
-        # model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
+        model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
         # model_scripted = torch.jit.script(model) # Export to TorchScript
         # model_scripted.save("../trained/torch_script_models/2024Oct_ves_merged_advten.pt")
-        model = torch.jit.load(model_path, map_location=self.device)
+        #model = torch.jit.load(model_path, map_location=self.device)
         
         model.eval()
         
@@ -406,8 +406,8 @@ class MergedNearFourierNetwork:
             model = Net_ves_merge_nocoords_nearFourier(14, 3.2, 28, rep=128)
         # model = Net_ves_merge_nocoords_nearFourier(13, 3.0, 26, rep=128)
         # model.load_state_dict(torch.load("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy/trained/ves_merged_nearFourier.pth"))
-        # model.load_state_dict(torch.load(path, map_location=self.device, weights_only=True))
-        model = torch.jit.load(path, map_location=self.device)
+        model.load_state_dict(torch.load(path, map_location=self.device, weights_only=True))
+        #model = torch.jit.load(path, map_location=self.device)
 
         # model_scripted = torch.jit.script(model) # Export to TorchScript
         # model_scripted.save("../trained/torch_script_models/ves_merged_disth_nearFourier.pt")

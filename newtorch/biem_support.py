@@ -166,7 +166,6 @@ def allExactStokesSLTarget_compare2(vesicleX, vesicle_sa, f, tarX, ids0, ids1, i
     # diffx = diff[:N, :, :Ntar, :]
     # diffy = diff[N:, :, Ntar:, :]
 
-    print(diffx.shape)
     dis2 = diffx**2 + diffy**2
     
     # info = dis2 <= (1/Ntar)**2

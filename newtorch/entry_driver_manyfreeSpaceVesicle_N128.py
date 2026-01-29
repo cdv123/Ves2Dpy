@@ -1,7 +1,7 @@
 # %%
 import numpy as np
 import torch
-torch.set_default_dtype(torch.float64)
+torch.set_default_dtype(torch.float32)
 import torch.backends.cudnn as cudnn
 cudnn.benchmark = True
 import torch._dynamo
@@ -21,7 +21,7 @@ from poten import Poten
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-cur_dtype = torch.float64
+cur_dtype = torch.float32
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -73,14 +73,14 @@ def set_bg_flow(bgFlow, speed):
 # speed = 2000
 # vinf = set_bg_flow(bgFlow, speed)
 
-bgFlow = 'vortex'
+bgFlow = 'shear'
 speed = 400 * 2
 vinf = set_bg_flow(bgFlow, speed)
 
 
 # Time stepping
 dt = 1e-5  # Time step size
-Th = 100000 * dt # Time horizon
+Th = 1000 * dt # Time horizon
 
 # Vesicle discretization
 N = 128  # Number of points to discretize vesicle
@@ -92,11 +92,13 @@ rbf_upsample = -1
 # Xics = np.load("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/48vesTG_N32.npy") ### INIT SHAPES FROM THE DATA SET
 # Xics = loadmat("../48vesiclesInTG_N128.mat").get('Xic') ### INIT SHAPES FROM THE DATA SET
 # Xics = loadmat("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/ManyVesICsTaylorGreen/nv504IC.mat").get('X')
-Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get('X')[:, :]
+selected_one = [0]
+Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get('X')[:, selected_one]
+Xics = Xics - Xics.mean()
 # Xics = init_data.get('Xic')
 # Xics = np.load("TG_new_start.npy")
 # Xics = loadmat("../3VesNearCheck.mat").get("X")
-X0 = torch.from_numpy(Xics).to(device)
+X0 = torch.from_numpy(Xics).to(device).float()
 
 
 if X0.shape[0] != 2*N:
@@ -116,13 +118,13 @@ X = X0.clone().to(device)
 
 # %%
 print(f"We have {nv} vesicles")
-Ten = torch.from_numpy(np.zeros((128,nv))).to(device)
+Ten = torch.from_numpy(np.zeros((128,nv))).to(device).float()
 
 # Build MLARM class to take time steps using networks
 # Load the normalization (mean, std) values for the networks
 # ADV Net retrained in Oct 2024
-adv_net_input_norm = np.load("../trained/2024Oct_adv_fft_tot_in_para.npy")
-adv_net_output_norm = np.load("../trained/2024Oct_adv_fft_tot_out_para.npy")
+adv_net_input_norm = np.load("../../files2runVes2Dpy/2024Oct_adv_fft_tot_in_para.npy")
+adv_net_output_norm = np.load("../../files2runVes2Dpy/2024Oct_adv_fft_tot_out_para.npy")
 # Relax Net for dt = 1E-5 (DIFF_June8)
 relax_net_input_norm = np.array([-8.430413700466488e-09, 0.06278684735298157,
                                 6.290720477863943e-08, 0.13339413702487946])
@@ -130,8 +132,8 @@ relax_net_output_norm = np.array([-2.884585348361668e-10, 0.00020574081281665713
                                 -5.137390512999218e-10, 0.0001763451291481033])
 # nearNetInputNorm = np.load("../trained/in_param_allmode.npy")
 # nearNetOutputNorm = np.load("../trained/out_param_allmode.npy")
-nearNetInputNorm = np.load("../trained/in_param_disth_allmode.npy")
-nearNetOutputNorm = np.load("../trained/out_param_disth_allmode.npy")
+nearNetInputNorm = np.load("../../files2runVes2Dpy/in_param_disth_allmode.npy")
+nearNetOutputNorm = np.load("../../files2runVes2Dpy/out_param_disth_allmode.npy")
 # tenSelfNetInputNorm = np.array([2.980232033378272e-11, 0.06010082736611366, 
 #                         -1.0086939616904544e-10, 0.13698545098304749])
 # tenSelfNetOutputNorm = np.array([327.26141357421875, 375.0673828125 ])
@@ -141,8 +143,8 @@ tenSelfNetInputNorm = np.array([0.00017108717293012887, 0.06278623640537262,
                         0.002038202714174986,0.13337858021259308])
 tenSelfNetOutputNorm = np.array([337.7627868652344, 466.6429138183594])
 
-tenAdvNetInputNorm = np.load("../trained/2024Oct_advten_in_para_allmodes.npy")
-tenAdvNetOutputNorm = np.load("../trained/2024Oct_advten_out_para_allmodes.npy")
+tenAdvNetInputNorm = np.load("../../files2runVes2Dpy/2024Oct_advten_in_para_allmodes.npy")
+tenAdvNetOutputNorm = np.load("../../files2runVes2Dpy/2024Oct_advten_out_para_allmodes.npy")
 
 mlarm = MLARM_manyfree_py(dt, vinf, oc,  False, 1e2, 
                 rbf_upsample,
@@ -161,19 +163,19 @@ mlarm.len0 = len0
 # mlarm.len0 = torch.ones((nv), device=X.device, dtype=torch.float32)
 mlarm.op = Poten(N)
 
-modes = torch.concatenate((torch.arange(0, N // 2), torch.arange(-N // 2, 0))).to(X.device) #.float()
+modes = torch.concatenate((torch.arange(0, N // 2), torch.arange(-N // 2, 0))).to(X.device).float()
 for _ in range(10):
     X, flag = oc.redistributeArcLength(X, modes)
     if flag:
         break
 
-ellipse = np.load("relaxed_shape.npy")
-ellipse = torch.from_numpy(ellipse).float().to(device)
-center_ = oc.getPhysicalCenter(ellipse)
-ellipse[:32, :] -= center_[0]
-ellipse[32:, :] -= center_[1]
-mlarm.ellipse = interpft_vec(ellipse, N)
-logger.info(f"center is {oc.getPhysicalCenter(mlarm.ellipse)}")
+#ellipse = np.load("relaxed_shape.npy")
+#ellipse = torch.from_numpy(ellipse).float().to(device)
+#center_ = oc.getPhysicalCenter(ellipse)
+#ellipse[:32, :] -= center_[0]
+#ellipse[32:, :] -= center_[1]
+#mlarm.ellipse = interpft_vec(ellipse, N)
+#logger.info(f"center is {oc.getPhysicalCenter(mlarm.ellipse)}")
 
 
 # Save the initial data

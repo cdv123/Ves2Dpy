@@ -69,7 +69,7 @@ class Poten:
 
         # print(diffx.shape)
         # rho2 = 1./(diffx ** 2 + diffy ** 2)
-        rho2 = 1./(diffx ** 2 + diffy ** 2)
+        rho2 = 1./(diffx ** 2 + diffy ** 2 + 1e-7)
 
         # print(f" max element in rho2 in Galpert :{torch.max(rho2)}")
         # Compute log-part contribution

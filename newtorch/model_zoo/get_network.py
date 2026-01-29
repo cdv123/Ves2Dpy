@@ -111,6 +111,7 @@ class MergedAdvNetwork:
         #     new_weights[key] = torch.concat(tuple(params),dim=0)
         # model.load_state_dict(new_weights, strict=True)
 
+        print("Model path: ", model_path)
         model = Net_merge_advection(12, 1.7, 20, rep=127)
         model.load_state_dict(torch.load(model_path, map_location=self.device))
         # model.load_state_dict(torch.load("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy/trained/ves_merged_adv.pth"))

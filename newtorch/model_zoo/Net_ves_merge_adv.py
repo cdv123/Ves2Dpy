@@ -197,19 +197,19 @@ class Net_merge_advection(nn.Module):
         self.factor = factor
         self.ch = ch
         self.rep = rep
-        self.layers = self.make_layer(num_blocks-1, ch, rep)
+        self.layer = self.make_layer(num_blocks-1, ch, rep)
         self.starter = Starter_Block(factor, ch, rep)
         self.end = End_Block(factor, ch, rep)
 
     def make_layer(self, num_blocks, ch, rep):
-        layers = nn.ModuleList()
+        layer = nn.ModuleList()
         for _ in range(num_blocks):
-            layers.append(Evo_Block(self.factor, ch, rep))
-        return layers
+            layer.append(Evo_Block(self.factor, ch, rep))
+        return layer
     
     def forward(self, input):
         out = self.starter(input)
-        for layer in self.layers:
+        for layer in self.layer:
             out = layer(out)
         out = self.end(out)
         return out

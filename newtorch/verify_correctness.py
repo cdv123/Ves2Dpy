@@ -112,7 +112,7 @@ Xwalls = None
 
 # Initial shape
 # selected_four = [0, 5, 7, 12]  # Indices of the four vesicles to select
-selected_one = [0]  # Indices of the four vesicles to select
+selected_one = [0, 1]  # Indices of the four vesicles to select
 Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
 Xics = Xics - Xics.mean()
 
