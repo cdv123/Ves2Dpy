@@ -13,30 +13,36 @@ class PararealSolver:
         numCores: int,
         endTime: float,
         pararealIter: int,
-        file_name = None
+        file_name=None,
     ) -> torch.Tensor:
         self.endTime = endTime
         self.numCores = numCores
         self.initVesicles = initVesicles
 
-        self.sigmaStore: torch.Tensor = torch.zeros(
+        self.parallelCorrectionsSigma: torch.Tensor = torch.empty(
             self.numCores + 1, *sigma.shape, device=sigma.device
         )
 
-        coarseSolutions: torch.Tensor = self.initSerialSweep(self.initVesicles)
+        coarseSolutions, self.coarseSigma = self.initSerialSweep(
+            self.initVesicles, sigma
+        )
         newCoarseSolutions: torch.Tensor = torch.empty(
             self.numCores + 1, *self.initVesicles.shape, device=initVesicles.device
         )
         latestVesicles = coarseSolutions.clone()
 
+        self.newCoarseSigma: torch.Tensor = torch.zeros(
+            self.numCores + 1, *sigma.shape, device=sigma.device
+        )
+        self.latestSigma: torch.Tensor = self.coarseSigma.clone()
+
         parallelCorrections: torch.Tensor = torch.empty(
             self.numCores + 1, *self.initVesicles.shape, device=initVesicles.device
         )
 
-
         for k in range(pararealIter):
             print("Parareal Iteration: ", k)
-            parallelCorrections = self.parallelSweep(
+            parallelCorrections, self.parallelCorrectionsSigma = self.parallelSweep(
                 latestVesicles, parallelCorrections
             )
 
@@ -48,6 +54,10 @@ class PararealSolver:
             )
 
             newCoarseSolutions, coarseSolutions = coarseSolutions, newCoarseSolutions
+            self.newCoarseSigma, self.coarseSigma = (
+                self.coarseSigma,
+                self.newCoarseSigma,
+            )
 
         if file_name is not None:
             print("Writing solution")
@@ -56,8 +66,7 @@ class PararealSolver:
         return latestVesicles
 
     def initSerialSweep(
-        self,
-        initCondition: torch.Tensor,
+        self, initCondition: torch.Tensor, initSigma: torch.Tensor
     ) -> torch.Tensor:
         print("Starting initial Serial Sweep")
         vesicleTimeSteps: torch.Tensor = torch.empty(
@@ -67,12 +76,20 @@ class PararealSolver:
             dtype=torch.float32,
         )
 
+        sigmaTimeSteps: torch.Tensor = torch.empty(
+            self.numCores + 1,
+            *initSigma.shape,
+            device=initSigma.device,
+            dtype=initSigma.dtype,
+        )
+
         vesicleTimeSteps[0] = initCondition
+        sigmaTimeSteps[0] = initSigma
 
         for i in range(self.numCores):
             print(f"Iteration {i} in initial sweep")
-            vesicleTimeSteps[i + 1] = self.coarseSolver.solve(
-                vesicleTimeSteps[i], self.sigmaStore[i]
+            vesicleTimeSteps[i + 1], sigmaTimeSteps[i + 1] = self.coarseSolver.solve(
+                vesicleTimeSteps[i], sigmaTimeSteps[i]
             )
 
         return vesicleTimeSteps
@@ -86,16 +103,18 @@ class PararealSolver:
     ):
         print("Starting serial Sweep Correction")
         for n in range(1, self.numCores + 1):
-            newCoarse[n] = self.coarseSolver.solve(
-                latestVesicles[n - 1], self.sigmaStore[n - 1]
+            newCoarse[n], self.newCoarseSigma[n] = self.coarseSolver.solve(
+                latestVesicles[n - 1], self.latestSigma[n - 1]
             )
             latestVesicles[n] = newCoarse[n] + parallelCorrection[n] - previousCoarse[n]
+            self.latestSigma[n] = (
+                self.newCoarseSigma[n]
+                + self.parallelCorrectionsSigma[n]
+                - self.coarseSigma[n]
+            )
 
     def parallelSweep(
-        self,
-        inputVesicles: torch.Tensor,
-        newVesicles: torch.Tensor,
-        file_name = None
+        self, inputVesicles: torch.Tensor, newVesicles: torch.Tensor, file_name=None
     ) -> torch.Tensor:
         print("Starting parallel sweep")
         return self.parallelSolver.solve(

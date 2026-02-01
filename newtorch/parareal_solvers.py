@@ -30,19 +30,25 @@ class BIEMSolver:
             (torch.arange(0, params["N"] // 2), torch.arange(-params["N"] // 2, 0))
         ).to(initPositions.device)
 
-
-    def solve(self, initPositions: torch.Tensor, sigmaStore: torch.Tensor, out_file_name = None, start_time = 0):
+    def solve(
+        self,
+        initPositions: torch.Tensor,
+        sigmaStore: torch.Tensor,
+        out_file_name=None,
+        start_time=0,
+    ):
         positions = initPositions.clone()
+        newSigma = sigmaStore.clone()
         if self.options["confined"]:
             self.tt.initial_confined()
 
         num_steps = int(self.finalTime / self.params["dt"])
         print("Number of steps:", num_steps)
 
-        for i in range(num_steps):
+        for _ in range(num_steps):
             start_time += self.params["dt"]
-            positionsNew, sigmaStore, self.eta, self.RS, _, _ = self.tt.time_step(
-                positions, sigmaStore, self.eta, self.RS
+            positionsNew, newSigma, self.eta, self.RS, _, _ = self.tt.time_step(
+                positions, newSigma, self.eta, self.RS
             )
             if self.options["reparameterization"]:
                 # Redistribute arc-length
@@ -61,12 +67,14 @@ class BIEMSolver:
                 )
 
             if out_file_name is not None:
-                output = np.concatenate(([start_time], positions.cpu().numpy().T.flatten())).astype("float64")
+                output = np.concatenate(
+                    ([start_time], positions.cpu().numpy().T.flatten())
+                ).astype("float64")
 
                 with open(out_file_name, "ab") as fid:
                     output.tofile(fid)
 
-        return positions
+        return positions, newSigma
 
 
 class WorkerState:
@@ -75,17 +83,17 @@ class WorkerState:
         self.device = gpu_id
         torch.set_default_device(f"cuda:{self.device}")
 
-        self.sigmaStore = torch.zeros(sigmaShape, dtype=torch.float64, device=self.device)
         self.params = params
         self.params["viscCont"] = self.params["viscCont"].to(self.device)
         self.options = options
         self.Xwalls = Xwalls.to(device) if Xwalls else None
 
-    def run_solver(self, initPositions, file_name, start_time):
+    def run_solver(self, initPositions, sigmaStore, file_name, start_time):
         positions = initPositions.to(self.device)
+        sigma = sigmaStore.to(self.device)
         self.solver = BIEMSolver(self.options, self.params, self.Xwalls, positions)
 
-        return self.solver.solve(positions, self.sigmaStore, file_name, start_time)
+        return self.solver.solve(positions, sigma, file_name, start_time)
 
 
 # Parallel solver for parareal
@@ -140,9 +148,11 @@ class ParallelSolver:
         )
 
     @staticmethod
-    def run_worker(initPositions, file_name = None, start_time = 0):
+    def run_worker(initPositions, sigmaStore, file_name=None, start_time=0):
         global _worker
-        return _worker.run_solver(initPositions, file_name, start_time).cpu()
+        return _worker.run_solver(
+            initPositions, sigmaStore, file_name, start_time
+        ).cpu()
 
     def _shutdown_pool(self):
         if self.pool is None:
@@ -152,31 +162,42 @@ class ParallelSolver:
         self.pool.join()
         self.pool = None
 
-
     def solve(
-            self, positions: torch.Tensor, positionsPrime: torch.Tensor, 
-            numCores: int, file_name: str = None
-        ):
+        self,
+        positions: torch.Tensor,
+        positionsPrime: torch.Tensor,
+        sigmaStore: torch.Tensor,
+        sigmaStorePrime: torch.Tensor,
+        numCores: int,
+        file_name: str = None,
+    ):
         self.device = positions.device
         inputs = [positions[i - 1].cpu() for i in range(1, numCores + 1)]
         if file_name is not None:
             file_names = [f"file_name_{i}" for i in range(numCores)]
-            start_times = [self.params["T"]*i for i in range(numCores)]
+            start_times = [self.params["T"] * i for i in range(numCores)]
         try:
             if file_name is not None:
-                results = self.pool.starmap(ParallelSolver.run_worker, zip(inputs, file_names, start_times))
+                results = self.pool.starmap(
+                    ParallelSolver.run_worker,
+                    zip(inputs, sigmaStore, file_names, start_times),
+                )
             else:
-                results = self.pool.map(ParallelSolver.run_worker, inputs)
+                # results = self.pool.map(ParallelSolver.run_worker, inputs)
+                results = self.pool.starmap(
+                    ParallelSolver.run_worker, zip(inputs, sigmaStore)
+                )
         except:
             self._shutdown_pool()
             raise
 
-        for i, out in enumerate(results, start=1):
-            positionsPrime[i] = out.to(self.device)
+        for i, (positionsOut, sigmaOut) in enumerate(results, start=1):
+            positionsPrime[i] = positionsOut.to(self.device)
+            sigmaStorePrime[i] = sigmaOut.to(self.device)
 
         if file_name is not None:
             for file in file_names:
-                CHUNK_SIZE = 1024*1024
+                CHUNK_SIZE = 1024 * 1024
                 print("Writing to file")
 
                 with open(file, "rb") as infile, open(file_name, "ab") as outfile:
@@ -187,7 +208,7 @@ class ParallelSolver:
                         outfile.write(chunk)
                 os.remove(file)
 
-        return positionsPrime
+        return positionsPrime, sigmaStorePrime
 
     def close(self):
         self.pool.close()
