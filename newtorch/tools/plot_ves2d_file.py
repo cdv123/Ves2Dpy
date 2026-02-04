@@ -1,10 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from load_ves2d_file import load_ves2d_file
-from matplotlib.animation import FuncAnimation
 
 # --- Load data ---
-filename = "output_BIEM/shear.bin"
+filename = "output_BIEM/vesnet.bin"
 vesx, vesy, time, N, nv, xinit, yinit = load_ves2d_file(filename)
 
 ntime = time.size
@@ -14,7 +13,7 @@ xmin, xmax = vesx.min(), vesx.max()
 ymin, ymax = vesy.min(), vesy.max()
 
 # --- Time loop ---
-for it in range(ntime):
+for it in range(0, ntime, 10):
     plt.figure(1)
     plt.clf()
 
@@ -23,15 +22,15 @@ for it in range(ntime):
     y = np.vstack([vesy[:, :, it], vesy[0, :, it]])
 
     # Plot outline
-    plt.plot(x, y, 'r', linewidth=2)
+    plt.plot(x, y, "r", linewidth=2)
 
     # Filled vesicles
-    plt.fill(x, y, color='r', edgecolor='r')
+    plt.fill(x, y, color="r", edgecolor="r")
 
     # Axis settings
-    plt.axis('equal')
-    plt.xlim(xmin, xmax)
-    plt.ylim(ymin, ymax)
+    # plt.axis("equal")
+    plt.xlim(-1, 1)
+    plt.ylim(-1, 1)
 
     plt.title(f"{it + 1}")  # MATLAB is 1-based
 

@@ -30,7 +30,7 @@ def load_ves2d_file(filename):
 
     # Initial configuration
     n_init = 2 * N * nv
-    Xinit = val[2:2 + n_init]
+    Xinit = val[2 : 2 + n_init]
 
     xinit = np.zeros((N, nv))
     yinit = np.zeros((N, nv))
@@ -46,7 +46,7 @@ def load_ves2d_file(filename):
         istart = iend
 
     # Remaining data: time series
-    val = val[2 + n_init:]
+    val = val[2 + n_init :]
 
     # Number of time steps
     stride = 2 * N * nv + 1
@@ -71,3 +71,64 @@ def load_ves2d_file(filename):
             istart = iend
 
     return vesx, vesy, time, N, nv, xinit, yinit
+
+
+def load_ves2d_file_singleX(filename):
+    """
+    Load Ves2D binary output file and return trajectory as X(t).
+
+    Returns
+    -------
+    Xtraj : ndarray, shape (2N, nv, ntime)
+        Full vesicle trajectory.
+    time : ndarray, shape (ntime,)
+        Time values.
+    N : int
+    nv : int
+    Xinit : ndarray, shape (2N, nv)
+        Initial configuration.
+    """
+
+    # ---- Read entire file ----
+    val = np.fromfile(filename, dtype=np.float64)
+
+    # ---- Header ----
+    N = int(val[0])
+    nv = int(val[1])
+
+    blocksize = 2 * N * nv
+
+    # ---- Initial configuration ----
+    Xinit_flat = val[2 : 2 + blocksize]
+
+    # Written as X.T.flatten(), so reshape as (nv, 2N) then transpose
+    Xinit = Xinit_flat.reshape(nv, 2 * N).T  # shape (2N, nv)
+
+    # ---- Remaining data ----
+    val = val[2 + blocksize :]
+
+    stride = 1 + blocksize
+    ntime = val.size // stride
+
+    if val.size % stride != 0:
+        raise ValueError("File size does not match expected record structure")
+
+    # ---- Allocate ----
+    time = np.zeros(ntime)
+    Xtraj = np.zeros((2 * N, nv, ntime))
+
+    # ---- Parse records ----
+    istart = 0
+    for it in range(ntime):
+        # Time
+        time[it] = val[istart]
+        istart += 1
+
+        # X block
+        X_flat = val[istart : istart + blocksize]
+        istart += blocksize
+
+        # Rebuild X: (2N, nv)
+        Xtraj[:, :, it] = X_flat.reshape(nv, 2 * N).T
+
+    return Xtraj, time, N, nv, Xinit
