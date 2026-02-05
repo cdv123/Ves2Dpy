@@ -5,6 +5,7 @@ torch.set_default_dtype(torch.float32)
 import torch.backends.cudnn as cudnn
 cudnn.benchmark = True
 import torch._dynamo
+from torch.profiler import profile, ProfilerActivity
 torch._dynamo.reset()
 # from curve_batch import Curve
 from curve_batch_compile import Curve
@@ -74,7 +75,7 @@ def set_bg_flow(bgFlow, speed):
 # vinf = set_bg_flow(bgFlow, speed)
 
 bgFlow = 'shear'
-speed = 400 * 2
+speed = 400
 vinf = set_bg_flow(bgFlow, speed)
 
 
@@ -92,9 +93,10 @@ rbf_upsample = -1
 # Xics = np.load("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/48vesTG_N32.npy") ### INIT SHAPES FROM THE DATA SET
 # Xics = loadmat("../48vesiclesInTG_N128.mat").get('Xic') ### INIT SHAPES FROM THE DATA SET
 # Xics = loadmat("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/ManyVesICsTaylorGreen/nv504IC.mat").get('X')
-selected_one = [0]
-Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get('X')[:, selected_one]
-Xics = Xics - Xics.mean()
+#selected_one = [0]
+#Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get('X')[:, selected_one]
+Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get('X')
+# Xics = Xics - Xics.mean()
 # Xics = init_data.get('Xic')
 # Xics = np.load("TG_new_start.npy")
 # Xics = loadmat("../3VesNearCheck.mat").get("X")
@@ -105,6 +107,7 @@ if X0.shape[0] != 2*N:
     X0 = interpft_vec(X0, N)
 
 nv = X0.shape[1]
+print("Number of vesicles", nv)
 area0, len0 = oc.geomProp(X0)[1:]
 print(f"area0 is {area0}")
 print(f"len0 is {len0}")
@@ -156,6 +159,17 @@ mlarm = MLARM_manyfree_py(dt, vinf, oc,  False, 1e2,
                 device=device, logger=logger,
                 )
 
+mlarm.nearNetwork.model.eval()
+mlarm.relaxNetwork.model.eval()
+mlarm.tenSelfNetwork.model.eval()
+mlarm.tenAdvNetwork.model.eval()
+mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="reduce-overhead")
+# mlarm.advNetwork.model  = torch.compile(mlarm.advNetwork.model,  mode="max-autotune")
+mlarm.relaxNetwork.model = torch.compile(mlarm.relaxNetwork.model, mode="reduce-overhead")
+mlarm.tenSelfNetwork.model = torch.compile(mlarm.tenSelfNetwork.model, mode="reduce-overhead")
+mlarm.tenAdvNetwork.model = torch.compile(mlarm.tenAdvNetwork.model, mode="reduce-overhead")
+#print(type(mlarm.nearNetwork))
+
 area0, len0 = oc.geomProp(X)[1:]
 mlarm.area0 = area0
 # mlarm.area0 = torch.ones((nv), device=X.device, dtype=torch.float32) * 0.0524
@@ -186,37 +200,48 @@ with open(fileName, 'wb') as fid:
 # Evolve in time
 currtime = 0
 # it = 0
+print("Tension dtype", Ten.dtype)
 
 print(f"using 3 layers, {mlarm.rbf_upsample} upsampling, saved as {fileName}")
 # while currtime < Th:
+
+#mlarm.time_step_many_noinfo = torch.compile(
+#    mlarm.time_step_many_noinfo,
+#    fullgraph=True,
+#    mode="reduce-overhead"
+#)
+
+#with torch.inference_mode():
 for it in tqdm(range(int(Th//dt))): 
+#for it in range(20): 
     # Take a time step
-    tStart = time.time()
+    #tStart = time.time()
     
-    # X, Ten = mlarm.time_step_many(X, Ten)
+    #X, Ten = mlarm.time_step_many(X, Ten)
     with torch.no_grad():
         X, Ten = mlarm.time_step_many_noinfo(X, Ten, nlayers)
-        # X, Ten = mlarm.time_step_many_noinfo_exactVelLayer(X, Ten, nlayers)
-    # np.save(f"shape_t{currtime}.npy", X)
-    tEnd = time.time()
+        #X, Ten = mlarm.time_step_many_noinfo_exactVelLayer(X, Ten, nlayers)
+    ## np.save(f"shape_t{currtime}.npy", X)
+    #tEnd = time.time()
 
-    # Find error in area and length
-    area, length = oc.geomProp(X)[1:]
-    errArea = torch.max(torch.abs(area - mlarm.area0) / mlarm.area0)
-    errLen = torch.max(torch.abs(length - mlarm.len0) / mlarm.len0)
-
-    # Update counter and time
-    # it += 1
+    ## Find error in area and length
+    #area, length = oc.geomProp(X)[1:]
+    #errArea = torch.max(torch.abs(area - mlarm.area0) / mlarm.area0)
+    #errLen = torch.max(torch.abs(length - mlarm.len0) / mlarm.len0)
+        #if options["reparameterization"]:
+    # Redistribute arc-length
+    ## Update counter and time
+    ## it += 1
     currtime += dt
 
-    # Print time step info
-    print('********************************************')
-    print(f'{it+1}th time step for N=128, time: {currtime}')
-    print(f'Solving with networks takes {tEnd - tStart} sec.')
-    print(f'Error in area and length: {max(errArea, errLen)}')
-    print('********************************************\n')
+    ## Print time step info
+    #print('********************************************')
+    #print(f'{it+1}th time step for N=128, time: {currtime}')
+    #print(f'Solving with networks takes {tEnd - tStart} sec.')
+    #print(f'Error in area and length: {max(errArea, errLen)}')
+    #print('********************************************\n')
 
-    # Save data
+    ## Save data
     output = np.concatenate(([currtime], X.cpu().numpy().T.flatten())).astype('float64')
     with open(fileName, 'ab') as fid:
         output.tofile(fid)

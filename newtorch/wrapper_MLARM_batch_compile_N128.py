@@ -426,7 +426,9 @@ def allExactStokesSLTarget_broadcast(vesicleX, vesicle_sa, f, tarX, length:float
 #     return stokesSLPtar / (4 * torch.pi)
 
 
-# @torch.compile(backend='cudagraphs')
+
+# CHANGE HERE
+#@torch.compile(backend='cudagraphs')
 @torch.jit.script
 def allExactStokesSLTarget_compare1(vesicleX, vesicle_sa, f, tarX, length:float=1.0, offset: int = 0):
     """
@@ -551,7 +553,8 @@ def allExactStokesSLTarget_compare1(vesicleX, vesicle_sa, f, tarX, length:float=
 
 
 
-# @torch.compile(backend='cudagraphs')
+# CHANGE HERE
+#@torch.compile(backend='cudagraphs')
 @torch.jit.script
 def allExactStokesSLTarget_compare2(vesicleX, vesicle_sa, f, tarX, ids0, ids1, ids2, length:float=1.0, offset: int = 0):
     """
@@ -735,109 +738,109 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         
     
 
-    # def time_step_many(self, Xold, tenOld):
-    #     # oc = self.oc
-    #     torch.set_default_device(Xold.device)
-    #     # background velocity on vesicles
-    #     vback = self.vinf(Xold)
-        
+    #def time_step_many(self, Xold, tenOld):
+    #    # oc = self.oc
+    #    torch.set_default_device(Xold.device)
+    #    # background velocity on vesicles
+    #    vback = self.vinf(Xold)
+    #  
 
-    #     # build vesicle class at the current step
-    #     vesicle = capsules(Xold, [], [], self.kappa, 1)
-    #     N = Xold.shape[0] // 2
-    #     nv = Xold.shape[1]
-    #     Nup = ceil(sqrt(N)) * N
-        
-    #     vesicleUp = capsules(upsample_fft(Xold, Nup), [],[], self.kappa, 1)
+    #    # build vesicle class at the current step
+    #    vesicle = capsules(Xold, [], [], self.kappa, 1)
+    #    N = Xold.shape[0] // 2
+    #    nv = Xold.shape[1]
+    #    Nup = ceil(sqrt(N)) * N
+    #  
+    #    vesicleUp = capsules(upsample_fft(Xold, Nup), [],[], self.kappa, 1)
 
-    #     # Compute velocity induced by repulsion force
-    #     repForce = torch.zeros_like(Xold)
-    #     # if self.use_repulsion:
-    #     #     repForce = vesicle.repulsionForce(Xold, self.repStrength)
+    #    # Compute velocity induced by repulsion force
+    #    repForce = torch.zeros_like(Xold)
+    #    # if self.use_repulsion:
+    #    #     repForce = vesicle.repulsionForce(Xold, self.repStrength)
 
-    #     # Compute bending forces + old tension forces
-    #     fBend = vesicle.bendingTerm(Xold)
-    #     fTen = vesicle.tensionTerm(tenOld)
-    #     tracJump = fBend + fTen  # total elastic force
+    #    # Compute bending forces + old tension forces
+    #    fBend = vesicle.bendingTerm(Xold)
+    #    fTen = vesicle.tensionTerm(tenOld)
+    #    tracJump = fBend + fTen  # total elastic force
 
-    #     Xstand, standardizationValues = self.standardizationStep(Xold)
+    #    Xstand, standardizationValues = self.standardizationStep(Xold)
 
-    #     # Explicit Tension at the Current Step
-    #     # Calculate velocity induced by vesicles on each other due to elastic force
-    #     # use neural networks to calculate near-singular integrals
-    #     # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=False) as prof:
-    #     #     with record_function("predictNearLayers"):
-    #     velx_real, vely_real, velx_imag, vely_imag, xlayers, ylayers = self.predictNearLayers(Xstand, standardizationValues)
+    #    # Explicit Tension at the Current Step
+    #    # Calculate velocity induced by vesicles on each other due to elastic force
+    #    # use neural networks to calculate near-singular integrals
+    #    # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=False) as prof:
+    #    #     with record_function("predictNearLayers"):
+    #    velx_real, vely_real, velx_imag, vely_imag, xlayers, ylayers = self.predictNearLayers(Xstand, standardizationValues)
 
-    #     # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=30))
+    #    # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=30))
 
-    #     # info = self.nearZoneInfo(vesicle)
-    #     # info_rbf, info_stokes = self.naiveNearZoneInfo(vesicle.X, vesicleUp.X)
-    #     info_rbf, info_stokes = None, None
+    #    # info = self.nearZoneInfo(vesicle)
+    #    # info_rbf, info_stokes = self.naiveNearZoneInfo(vesicle.X, vesicleUp.X)
+    #    info_rbf, info_stokes = None, None
 
-    #     const = 0.672 * self.len0[0].item()
-    #     all_X = torch.concat((xlayers.reshape(-1,1,nv), ylayers.reshape(-1,1,nv)), dim=1) # (3 * N, 2, nv), 2 for x and y
-    #     all_X = all_X /const * N   
-    #     matrices = torch.exp(- torch.sum((all_X[:, None] - all_X[None, ...])**2, dim=-2)) #+ 1e-6 * torch.eye(5*N).unsqueeze(-1) # (3*N, 3*N, nv)
-    #     L = torch.linalg.cholesky(matrices.permute(2, 0, 1))
+    #    const = 0.672 * self.len0[0].item()
+    #    all_X = torch.concat((xlayers.reshape(-1,1,nv), ylayers.reshape(-1,1,nv)), dim=1) # (3 * N, 2, nv), 2 for x and y
+    #    all_X = all_X /const * N   
+    #    matrices = torch.exp(- torch.sum((all_X[:, None] - all_X[None, ...])**2, dim=-2)) #+ 1e-6 * torch.eye(5*N).unsqueeze(-1) # (3*N, 3*N, nv)
+    #    L = torch.linalg.cholesky(matrices.permute(2, 0, 1))
 
-        
-    #     farFieldtracJump, info_rbf, info_stokes = self.computeStokesInteractions(vesicle, vesicleUp, info_rbf, info_stokes, L, tracJump, repForce, velx_real, vely_real, velx_imag, vely_imag, 
-    #                                     xlayers, ylayers, standardizationValues, first=True)
-    #     farFieldtracJump = filterShape(farFieldtracJump, 4)
-
-
-    #     # if not torch.allclose(info, info_.reshape(nv, N, nv, Nup)):
-    #     #     raise ValueError('info not equal')
-        
-    #     vBackSolve = self.invTenMatOnVback(Xstand, standardizationValues, vback + farFieldtracJump)
-
-    #     selfBendSolve = self.invTenMatOnSelfBend(Xstand, standardizationValues)
+    #  
+    #    farFieldtracJump, info_rbf, info_stokes = self.computeStokesInteractions(vesicle, vesicleUp, info_rbf, info_stokes, L, tracJump, repForce, velx_real, vely_real, velx_imag, vely_imag, 
+    #                                    xlayers, ylayers, standardizationValues, first=True)
+    #    farFieldtracJump = filterShape(farFieldtracJump, 4)
 
 
-    #     tenNew = -(vBackSolve + selfBendSolve)
-    #     # tenNew = filterTension(tenNew, 4*N, 16)
+    #    # if not torch.allclose(info, info_.reshape(nv, N, nv, Nup)):
+    #    #     raise ValueError('info not equal')
+    #  
+    #    vBackSolve = self.invTenMatOnVback(Xstand, standardizationValues, vback + farFieldtracJump)
 
-    #     # update the elastic force with the new tension
-    #     fTen_new = vesicle.tensionTerm(tenNew)
-    #     tracJump = fBend + fTen_new
-
-    #     # Calculate far-field again and correct near field before advection
-    #     # use neural networks to calculate near-singular integrals
-    #     farFieldtracJump, info_rbf, info_stokes = self.computeStokesInteractions(vesicle, vesicleUp, info_rbf, info_stokes, L, tracJump, repForce, velx_real, vely_real, velx_imag, vely_imag, 
-    #                                             xlayers, ylayers, standardizationValues, first=False)
-    #     farFieldtracJump = filterShape(farFieldtracJump, 4)
-
-    #     # Total background velocity
-    #     vbackTotal = vback + farFieldtracJump
-
-    #     # Compute the action of dt*(1-M) on Xold
-
-    #     Xadv = self.translateVinfwTorch(Xold, Xstand, standardizationValues, vbackTotal)
+    #    selfBendSolve = self.invTenMatOnSelfBend(Xstand, standardizationValues)
 
 
-    #     Xadv = filterShape(Xadv, 8)
-    #     # XadvC = oc.correctAreaAndLength(Xadv, self.area0, self.len0)
-    #     # Xadv = oc.alignCenterAngle(Xadv, XadvC.to(Xold.device))
-        
-    #     # Compute the action of relax operator on Xold + Xadv
-    #     Xnew = self.relaxWTorchNet(Xadv)
+    #    tenNew = -(vBackSolve + selfBendSolve)
+    #    # tenNew = filterTension(tenNew, 4*N, 16)
 
-    #     modes = torch.concatenate((torch.arange(0, N // 2), torch.arange(-N // 2, 0))).to(Xold.device)
-    #     XnewC = Xnew.clone()
-    #     for _ in range(5):
-    #         Xnew, flag = self.oc.redistributeArcLength(Xnew, modes)
-    #         if flag:
-    #             break
-    #     Xnew = self.oc.alignCenterAngle(XnewC, Xnew.to(Xold.device))
+    #    # update the elastic force with the new tension
+    #    fTen_new = vesicle.tensionTerm(tenNew)
+    #    tracJump = fBend + fTen_new
 
-    #     Xnew = self.oc.correctAreaAndLength(Xnew, self.area0, self.len0)
+    #    # Calculate far-field again and correct near field before advection
+    #    # use neural networks to calculate near-singular integrals
+    #    farFieldtracJump, info_rbf, info_stokes = self.computeStokesInteractions(vesicle, vesicleUp, info_rbf, info_stokes, L, tracJump, repForce, velx_real, vely_real, velx_imag, vely_imag, 
+    #                                            xlayers, ylayers, standardizationValues, first=False)
+    #    farFieldtracJump = filterShape(farFieldtracJump, 4)
 
-    #     Xnew = filterShape(Xnew.to(Xold.device), 8)
+    #    # Total background velocity
+    #    vbackTotal = vback + farFieldtracJump
 
-    #     # MLARM_manyfree_py.info, MLARM_manyfree_py.dis2, MLARM_manyfree_py.diffx, MLARM_manyfree_py.diffy, MLARM_manyfree_py.full_mask = None, None, None, None, None
+    #    # Compute the action of dt*(1-M) on Xold
 
-    #     return Xnew, tenNew
+    #    Xadv = self.translateVinfwTorch(Xold, Xstand, standardizationValues, vbackTotal)
+
+
+    #    Xadv = filterShape(Xadv, 8)
+    #    # XadvC = oc.correctAreaAndLength(Xadv, self.area0, self.len0)
+    #    # Xadv = oc.alignCenterAngle(Xadv, XadvC.to(Xold.device))
+    #  
+    #    # Compute the action of relax operator on Xold + Xadv
+    #    Xnew = self.relaxWTorchNet(Xadv)
+
+    #    modes = torch.concatenate((torch.arange(0, N // 2), torch.arange(-N // 2, 0))).to(Xold.device)
+    #    XnewC = Xnew.clone()
+    #    for _ in range(5):
+    #        Xnew, flag = self.oc.redistributeArcLength(Xnew, modes)
+    #        if flag:
+    #            break
+    #    Xnew = self.oc.alignCenterAngle(XnewC, Xnew.to(Xold.device))
+
+    #    Xnew = self.oc.correctAreaAndLength(Xnew, self.area0, self.len0)
+
+    #    Xnew = filterShape(Xnew.to(Xold.device), 8)
+
+    #    # MLARM_manyfree_py.info, MLARM_manyfree_py.dis2, MLARM_manyfree_py.diffx, MLARM_manyfree_py.diffy, MLARM_manyfree_py.full_mask = None, None, None, None, None
+
+    #    return Xnew, tenNew
     
 
     
@@ -1009,7 +1012,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
     
     def time_step_many_noinfo(self, Xold, tenOld, nlayers=3):
         # oc = self.oc
-        torch.set_default_device(Xold.device)
+        #torch.set_default_device(Xold.device)
         # background velocity on vesicles
         vback = self.vinf(Xold)
 
@@ -1083,14 +1086,15 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         if self.rbf_upsample == 2:
             xlayers = interpft(xlayers.reshape(N, -1), N * 2)
             ylayers = interpft(ylayers.reshape(N, -1), N * 2)
+            # build coordinate tensor
 
         all_X = torch.concat((xlayers.reshape(-1,1,nv), ylayers.reshape(-1,1,nv)), dim=1) # (nlayers * N, 2, nv), 2 for x and y
         # all_X = all_X /const * N  
         all_X = all_X / const
         matrices = torch.exp(- torch.sum((all_X[:, None] - all_X[None, ...])**2, dim=-2)) 
-        # if self.rbf_upsample > 1:
         matrices += (torch.eye(all_X.shape[0]).unsqueeze(-1) * 1e-6).expand(-1,-1,nv) # (nlayers*N, nlayers*N, nv)
         
+        #L = torch.linalg.cholesky(matrices.permute(2, 0, 1))
         L = torch.linalg.cholesky(matrices.permute(2, 0, 1))
         # end.record()
         # torch.cuda.synchronize()
@@ -1746,7 +1750,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
     #     return Xnew, tenNew
     
     
-    # @torch.compile(backend='cudagraphs')
+    #@torch.compile(backend='cudagraphs')
     def predictNearLayers(self, Xstand, standardizationValues: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
                           nlayers: int = 3):
         # print('Near network predicting')
@@ -1862,10 +1866,10 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         vy_[torch.arange(nv), :, sortIdx.T] = vely_stand_
 
         VelBefRot_ = torch.concat((vx_, vy_), dim=-1) # (nv, nlayers, 2N)
-        VelRot_ = self.rotationOperator(VelBefRot_.reshape(-1, 2*N).T, 
-                        torch.repeat_interleave(-rotate, nlayers, dim=0), torch.zeros(2, nv))
         #VelRot_ = self.rotationOperator(VelBefRot_.reshape(-1, 2*N).T, 
-        #         torch.repeat_interleave(-rotate, nlayers, dim=0), torch.zeros(nv * nlayers))
+        #                torch.repeat_interleave(-rotate, nlayers, dim=0), torch.zeros(2, nv))
+        VelRot_ = self.rotationOperator(VelBefRot_.reshape(-1, 2*N).T, 
+                 torch.repeat_interleave(-rotate, nlayers, dim=0), torch.zeros(nv * nlayers))
         VelRot_ = VelRot_.T.reshape(nv, nlayers, 2*N).permute(2,1,0)
         velx_ = VelRot_[:N] # (N, nlayers, nv)
         vely_ = VelRot_[N:]
@@ -3606,7 +3610,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
     
     # @torch.jit.script_method
-    # @torch.compile(backend='cudagraphs')
+    #@torch.compile(backend='cudagraphs')
     def translateVinfwTorch(self, Xold, Xstand, standardizationValues : Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], vinf):
         N = Xstand.shape[0] // 2
         nv = Xstand.shape[1]
@@ -3654,7 +3658,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         return Xnew
 
-    # @torch.compile(backend='cudagraphs')
+    #@torch.compile(backend='cudagraphs')
     def invTenMatOnVback(self, Xstand, standardizationValues, vinf):
         # Approximate inv(Div*G*Ten)*Div*vExt 
         
@@ -3694,7 +3698,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         return vBackSolve
 
-    # @torch.compile(backend='cudagraphs')
+    #@torch.compile(backend='cudagraphs')
     def invTenMatOnSelfBend(self, Xstand, standardizationValues):
         # Approximate inv(Div*G*Ten)*G*(-Ben)*x
 
@@ -3709,9 +3713,9 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         # tenPredictStand = tenPredictStand #.double()
         tenPred = torch.zeros((N, nv), dtype=Xstand.dtype, device=Xstand.device)
         
-        # tenPred[sortIdx.T, torch.arange(nv, device=Xstand.device)] = tenPredictStand / scaling**2
-        col = torch.arange(nv, device=Xstand.device).unsqueeze(0).expand(sortIdx.shape[0], -1)
-        tenPred[sortIdx, col] = tenPredictStand / scaling**2
+        tenPred[sortIdx.T, torch.arange(nv, device=Xstand.device)] = tenPredictStand / scaling**2
+        #col = torch.arange(nv, device=Xstand.device).unsqueeze(0).expand(sortIdx.shape[0], -1)
+        #tenPred[sortIdx, col] = tenPredictStand / scaling**2
 
         return tenPred
 
@@ -4143,7 +4147,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
     # @staticmethod
     
-    # @torch.compile(backend='cudagraphs')
+    #@torch.compile(backend='cudagraphs')
     def standardizationStep(self, Xin):
         # compatible with multi ves
         X = Xin.clone()
@@ -4165,7 +4169,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         X = self.standardize(X, trans, rotate, rotCenter, scaling, multi_sortIdx)
         return X, (scaling, rotate, rotCenter, trans, multi_sortIdx)
 
-    @torch.compile(backend='cudagraphs')
+    #@torch.compile(backend='cudagraphs')
     def standardize(self, X, translation, rotation, rotCenter, scaling, multi_sortIdx):
         # compatible with multi ves
         N = len(multi_sortIdx[0])
@@ -4179,7 +4183,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         XrotSort = scaling * XrotSort
         return XrotSort
 
-    @torch.compile(backend='cudagraphs')
+    #@torch.compile(backend='cudagraphs')
     def destandardize(self, XrotSort, standardizationValues: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]):
         ''' compatible with multiple ves'''
         scaling, rotate, rotCenter, trans, sortIdx = standardizationValues

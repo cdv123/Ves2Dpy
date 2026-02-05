@@ -10,6 +10,7 @@ import numpy as np
 
 class VesNetSolver:
     def __init__(self, options, params, Xwalls, initPositions):
+        torch.set_default_dtype(torch.float32)
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         cur_dtype = torch.float32
 
@@ -90,6 +91,16 @@ class VesNetSolver:
             logger=logger,
         )
 
+        self.mlarm.nearNetwork.model.eval()
+        self.mlarm.relaxNetwork.model.eval()
+        self.mlarm.tenSelfNetwork.model.eval()
+        self.mlarm.tenAdvNetwork.model.eval()
+        self.mlarm.nearNetwork.model = torch.compile(self.mlarm.nearNetwork.model, mode="reduce-overhead")
+        # self.mlarm.advNetwork.model  = torch.compile(self.mlarm.advNetwork.model,  mode="max-autotune")
+        self.mlarm.relaxNetwork.model = torch.compile(self.mlarm.relaxNetwork.model, mode="reduce-overhead")
+        self.mlarm.tenSelfNetwork.model = torch.compile(self.mlarm.tenSelfNetwork.model, mode="reduce-overhead")
+        self.mlarm.tenAdvNetwork.model = torch.compile(self.mlarm.tenAdvNetwork.model, mode="reduce-overhead")
+
         self.area0, self.len0 = self.oc.geomProp(initPositions)[1:]
 
         self.mlarm.area0 = self.area0
@@ -119,6 +130,7 @@ class VesNetSolver:
         out_file_name=None,
         start_time=0,
     ):
+        sigmaStore = sigmaStore.to(dtype=torch.float32)
         positions = initPositions.clone()
 
         for _ in range(10):
@@ -145,4 +157,4 @@ class VesNetSolver:
                 with open(out_file_name, "ab") as fid:
                     output.tofile(fid)
 
-        return positions
+        return positions, sigmaStore
