@@ -2,6 +2,7 @@ import torch
 import os
 from typing import Optional
 import torch.multiprocessing as mp
+from parareal_vesnet import VesNetSolver
 
 torch.set_default_dtype(torch.float32)
 from tstep_biem import TStepBiem
@@ -150,9 +151,11 @@ class ParallelSolver:
     @staticmethod
     def run_worker(initPositions, sigmaStore, file_name=None, start_time=0):
         global _worker
-        return _worker.run_solver(
+        outPos, outSigma =  _worker.run_solver(
             initPositions, sigmaStore, file_name, start_time
-        ).cpu()
+        )
+
+        return outPos.cpu(), outSigma.cpu()
 
     def _shutdown_pool(self):
         if self.pool is None:

@@ -12,6 +12,7 @@ from scipy.io import loadmat
 from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
 from parareal_algorithm import PararealSolver
+from parareal_vesnet import VesNetSolver
 from parareal_solvers import ParallelSolver, BIEMSolver
 
 torch.set_default_dtype(torch.float64)
@@ -129,7 +130,7 @@ if __name__ == "__main__":
     # ------------------------------
     prams["N"] = X.shape[0] // 2
     prams["nv"] = X.shape[1]
-    prams["dt"] = 1e-5
+    prams["dt"] = 1e-6
     prams["T"] = 1000 * prams["dt"]
     prams["kappa"] = 1.0
     prams["viscCont"] = torch.ones(prams["nv"])
@@ -194,21 +195,21 @@ if __name__ == "__main__":
         (torch.arange(0, prams["N"] // 2), torch.arange(-prams["N"] // 2, 0))
     ).to(X.device)  # .double()
     
-    numCores = 1
+    numCores = 6
     prams["T"] /= numCores
     coarse_prams = prams.copy()
     
     # Use a larger time step size for coarse solver
     coarse_prams["dt"]*=10
     
-    coarseSolver = BIEMSolver(options, coarse_prams, Xwalls, X)
+    coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X)
     parallelSolver = ParallelSolver(options, prams, Xwalls, X, sigma, numCores)
     
     
     pararealSolver = PararealSolver(
         parallelSolver=parallelSolver, coarseSolver=coarseSolver)
     X = pararealSolver.pararealSolve(
-        initVesicles=X, sigma=sigma, numCores=numCores, endTime=prams["T"], pararealIter=2, file_name=fileName
+        initVesicles=X, sigma=sigma, numCores=numCores, endTime=prams["T"], pararealIter=1, file_name="output_BIEM/parareal_vesnet.bin"
     )
     parallelSolver.close()
     

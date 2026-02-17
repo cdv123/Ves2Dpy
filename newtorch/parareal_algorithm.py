@@ -92,7 +92,7 @@ class PararealSolver:
                 vesicleTimeSteps[i], sigmaTimeSteps[i]
             )
 
-        return vesicleTimeSteps
+        return vesicleTimeSteps, sigmaTimeSteps
 
     def serialSweepCorrection(
         self,
@@ -118,5 +118,5 @@ class PararealSolver:
     ) -> torch.Tensor:
         print("Starting parallel sweep")
         return self.parallelSolver.solve(
-            inputVesicles, newVesicles, self.numCores, file_name
+            inputVesicles, newVesicles, self.latestSigma, self.parallelCorrectionsSigma, self.numCores, file_name
         )
