@@ -8,7 +8,7 @@ def set_bg_flow(bgFlow, speed):
             return torch.zeros_like(X)  # Relaxation
         elif bgFlow == "shear":
             return speed * torch.vstack((X[N:], torch.zeros_like(X[:N])))  # Shear
-        elif bgFlow == "tayGreen":
+        elif bgFlow == "taylorGreen":
             return speed * torch.vstack(
                 (
                     torch.sin(X[:N]) * torch.cos(X[N:]),

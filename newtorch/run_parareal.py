@@ -118,6 +118,8 @@ if __name__ == "__main__":
     # ------------------------------
     
     # Initial shape
+    # selected_one = [0]
+    #Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
     Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
     
     sigma = None
@@ -144,7 +146,7 @@ if __name__ == "__main__":
     prams["minDist"] = 1.0 / 32
     
     options = {
-        "farField": "shear",
+        "farField": "taylorGreen",
         "repulsion": False,
         "correctShape": True,
         "reparameterization": True,
@@ -202,6 +204,7 @@ if __name__ == "__main__":
     # Use a larger time step size for coarse solver
     coarse_prams["dt"]*=10
     
+    #coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X)
     coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X)
     parallelSolver = ParallelSolver(options, prams, Xwalls, X, sigma, numCores)
     
@@ -209,7 +212,7 @@ if __name__ == "__main__":
     pararealSolver = PararealSolver(
         parallelSolver=parallelSolver, coarseSolver=coarseSolver)
     X = pararealSolver.pararealSolve(
-        initVesicles=X, sigma=sigma, numCores=numCores, endTime=prams["T"], pararealIter=1, file_name="output_BIEM/parareal_vesnet.bin"
+        initVesicles=X, sigma=sigma, numCores=numCores, endTime=prams["T"], pararealIter=1, file_name=fileName
     )
     parallelSolver.close()
     

@@ -17,8 +17,8 @@ from torch.profiler import profile, record_function, ProfilerActivity
 # import cupy as cp
 # from scipy.interpolate import RBFInterpolator as scipyinterp_cpu
 # from cupyx.scipy.interpolate import RBFInterpolator as scipyinterp_gpu
-from model_zoo_N32.get_network_torch_N32_compile import RelaxNetwork, TenSelfNetwork, MergedAdvNetwork, MergedTenAdvNetwork, MergedNearFourierNetwork, MergedInnerNearFourierNetwork
-from model_zoo_N32.get_network_torch_N32_compile import TenSelfNetwork_curv
+from model_zoo_N32.get_network_torch_N32 import RelaxNetwork, TenSelfNetwork, MergedAdvNetwork, MergedTenAdvNetwork, MergedNearFourierNetwork, MergedInnerNearFourierNetwork
+from model_zoo_N32.get_network_torch_N32 import TenSelfNetwork_curv
 # from cuda_practice.my_cuda_matvec_numba import block_diag_matvec
 # from cuda_practice.cuda_cg import solve_cg, solve_cg_onebyone
 # from cuda_practice.minres_my_cuda_matvec_numba import block_diag_matvec

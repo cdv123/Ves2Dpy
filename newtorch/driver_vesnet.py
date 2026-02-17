@@ -6,8 +6,9 @@ cudnn.benchmark = True
 import torch._dynamo
 torch._dynamo.reset()
 from curve_batch_compile import Curve
-from wrapper_MLARM_batch_compile_N32 import MLARM_manyfree_py
+from wrapper_MLARM_batch_compile_N128 import MLARM_manyfree_py
 from math import sqrt
+import logging
 import time
 from scipy.io import loadmat
 import matplotlib.pyplot as plt
@@ -15,7 +16,7 @@ from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
 
 
-def simulate(outfile, logging, resolution,
+def simulate(input, outfile, logging, resolution,
          flow, 
          rbf_params, 
          repulsion_params):
@@ -60,6 +61,7 @@ def simulate(outfile, logging, resolution,
 
     # Time stepping
     dt = 1e-5  # Time step size
+    num_steps = 1000
     Th = num_steps * dt # Time horizon
 
     # Vesicle discretization
@@ -209,7 +211,14 @@ def simulate(outfile, logging, resolution,
 # Set up the logger globally
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-handler = logging.FileHandler('try_repulse_' + args.filename + '.log')
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+#handler = logging.FileHandler('try_repulse_' + args.filename + '.log')
+#formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+#handler.setFormatter(formatter)
+#logger.addHandler(handler)
+#flow = {
+#    "name": "vortex",
+#    "speed": 400,
+#    "chanWidth": 2.5,
+#    "vortexSize": 2.5,
+#}
+#simulate("vesnet_output", logger, 128, flow, None, None)

@@ -6,26 +6,28 @@ cudnn.benchmark = True
 import torch._dynamo
 torch._dynamo.reset()
 from curve_batch_compile import Curve
-from wrapper_MLARM_batch_compile_N32 import MLARM_manyfree_py
+from wrapper_MLARM_batch_compile_N128 import MLARM_manyfree_py
 from math import sqrt
 import time
 from scipy.io import loadmat
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from filter import interpft
+from tools.filter import interpft
+from driver_vesnet import simulate
 
 import json
 
 # Load parameters from a JSON file
-with open("vesnet_config.json", "r") as f:
-    config = json.load(f)
+#with open("vesnet_config.json", "r") as f:
+#    config = json.load(f)
 
 # Set defaults (if not provided in JSON)
 params = {
-    "input": "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/shear_N32.npy",
-    "outfile": "linshi",
+    #"input": "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/shear_N32.npy",
+    "input": "../../npy-files/VF25_TG32Ves.mat",
+    "outfile": "vesnet_output",
     "logging": False,
-    "resolution": 32,
+    "resolution": 128,
     "num_steps": 100000,
     "flow": {
         "name": "vortex",
@@ -45,7 +47,7 @@ params = {
 }
 
 # Update defaults with values from config.json
-params.update(config)
+#params.update(config)
 
 # Now you can access them like before:
 input = params["input"]
@@ -62,7 +64,7 @@ simulate(
     outfile=outfile, 
     logging=logging, 
     resolution=resolution,
-    num_steps=num_steps,
+    #num_steps=num_steps,
     bgFlow=flow, 
     rbf_params=rbf_params, 
     repulsion_params=repulsion_params)

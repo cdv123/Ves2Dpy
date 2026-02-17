@@ -20,6 +20,9 @@ from tools.filter import interpft, interpft_vec
 import logging
 from poten import Poten
 
+torch.cuda.synchronize()
+torch.cuda.cudart().cudaProfilerStart()
+
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 cur_dtype = torch.float32
@@ -50,7 +53,7 @@ def set_bg_flow(bgFlow, speed):
             return torch.zeros_like(X)  # Relaxation
         elif bgFlow == 'shear':
             return speed * torch.vstack((X[N:], torch.zeros_like(X[:N])))  # Shear
-        elif bgFlow == 'tayGreen':
+        elif bgFlow == 'taylorGreen':
             return speed * torch.vstack((torch.sin(X[:N]) * torch.cos(X[N:]), -torch.cos(X[:N]) * torch.sin(X[N:])))  # Taylor-Green
         elif bgFlow == 'parabolic':
             return torch.vstack((speed * (1 - (X[N:] / 0.375) ** 2), torch.zeros_like(X[:N])))  # Parabolic
@@ -81,7 +84,7 @@ vinf = set_bg_flow(bgFlow, speed)
 
 # Time stepping
 dt = 1e-5  # Time step size
-Th = 1000 * dt # Time horizon
+Th = 100 * dt # Time horizon
 
 # Vesicle discretization
 N = 128  # Number of points to discretize vesicle
@@ -93,10 +96,10 @@ rbf_upsample = -1
 # Xics = np.load("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/48vesTG_N32.npy") ### INIT SHAPES FROM THE DATA SET
 # Xics = loadmat("../48vesiclesInTG_N128.mat").get('Xic') ### INIT SHAPES FROM THE DATA SET
 # Xics = loadmat("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/ManyVesICsTaylorGreen/nv504IC.mat").get('X')
-#selected_one = [0]
+selected_one = [0]
 #Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get('X')[:, selected_one]
 Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get('X')
-# Xics = Xics - Xics.mean()
+#Xics = Xics - Xics.mean()
 # Xics = init_data.get('Xic')
 # Xics = np.load("TG_new_start.npy")
 # Xics = loadmat("../3VesNearCheck.mat").get("X")
@@ -245,3 +248,6 @@ for it in tqdm(range(int(Th//dt))):
     output = np.concatenate(([currtime], X.cpu().numpy().T.flatten())).astype('float64')
     with open(fileName, 'ab') as fid:
         output.tofile(fid)
+
+torch.cuda.synchronize()
+torch.cuda.cudart().cudaProfilerStop()

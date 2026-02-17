@@ -1866,11 +1866,14 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         vy_[torch.arange(nv), :, sortIdx.T] = vely_stand_
 
         VelBefRot_ = torch.concat((vx_, vy_), dim=-1) # (nv, nlayers, 2N)
-        #VelRot_ = self.rotationOperator(VelBefRot_.reshape(-1, 2*N).T, 
-        #                torch.repeat_interleave(-rotate, nlayers, dim=0), torch.zeros(2, nv))
-        VelRot_ = self.rotationOperator(VelBefRot_.reshape(-1, 2*N).T, 
-                 torch.repeat_interleave(-rotate, nlayers, dim=0), torch.zeros(nv * nlayers))
-        VelRot_ = VelRot_.T.reshape(nv, nlayers, 2*N).permute(2,1,0)
+
+        if nv == 1:
+            VelRot_ = self.rotationOperator(VelBefRot_.reshape(-1, 2*N).T, 
+                            torch.repeat_interleave(-rotate, nlayers, dim=0), torch.zeros(2, nv))
+        else:
+            VelRot_ = self.rotationOperator(VelBefRot_.reshape(-1, 2*N).T, 
+                     torch.repeat_interleave(-rotate, nlayers, dim=0), torch.zeros(nv * nlayers))
+            VelRot_ = VelRot_.T.reshape(nv, nlayers, 2*N).permute(2,1,0)
         velx_ = VelRot_[:N] # (N, nlayers, nv)
         vely_ = VelRot_[N:]
 
@@ -3712,10 +3715,11 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         # tenPredictStand = self.tenSelfNetwork.forward_curv(Xstand)
         # tenPredictStand = tenPredictStand #.double()
         tenPred = torch.zeros((N, nv), dtype=Xstand.dtype, device=Xstand.device)
-        
-        tenPred[sortIdx.T, torch.arange(nv, device=Xstand.device)] = tenPredictStand / scaling**2
-        #col = torch.arange(nv, device=Xstand.device).unsqueeze(0).expand(sortIdx.shape[0], -1)
-        #tenPred[sortIdx, col] = tenPredictStand / scaling**2
+        if nv == 1:
+            col = torch.arange(nv, device=Xstand.device).unsqueeze(0).expand(sortIdx.shape[0], -1)
+            tenPred[sortIdx, col] = tenPredictStand / scaling**2
+        else:
+            tenPred[sortIdx.T, torch.arange(nv, device=Xstand.device)] = tenPredictStand / scaling**2
 
         return tenPred
 

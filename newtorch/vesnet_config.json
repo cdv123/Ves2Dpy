@@ -1,7 +1,7 @@
 {
-  "filename": "linshi",
-  "resolution": 32,
-  "bgFlow": "vortex",
+  "filename": "output",
+  "resolution": 128,
+  "bgFlow": "shear",
   "speed": 400,
   "chanWidth": 2.5,
   "vortexSize": 2.5,

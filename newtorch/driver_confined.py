@@ -54,7 +54,7 @@ def initVes2D(options=None, prams=None):
         "farField": "shear",
         "repulsion": False,
         "correctShape": False,
-        "reparameterization": False,
+        "reparameterization": True,
         "usePreco": True,
         "matFreeWalls": False,
         "confined": False,
@@ -114,7 +114,10 @@ Xwalls = None
 # ------------------------------
 
 # Initial shape
-Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get("X")
+# selected_one = [0]
+#Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
+Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
+#Xics = Xics - Xics.mean()
 
 sigma = None
 X = torch.from_numpy(Xics).float().to(device)
@@ -128,7 +131,7 @@ prams["N"] = X.shape[0] // 2
 prams["nv"] = X.shape[1]
 prams["dt"] = 1e-6
 # prams['T'] = 50000 * prams['dt']
-prams["T"] = 200 * prams["dt"]
+prams["T"] = 1000 * prams["dt"]
 prams["kappa"] = 1.0
 prams["viscCont"] = torch.ones(prams["nv"])
 prams["gmresTol"] = 1e-10
@@ -141,7 +144,7 @@ prams["repStrength"] = 1e5
 prams["minDist"] = 1.0 / 32
 
 options = {
-    "farField": "shear",
+    "farField": "taylorGreen",
     "repulsion": False,
     "correctShape": True,
     "reparameterization": True,
