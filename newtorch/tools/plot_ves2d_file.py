@@ -3,14 +3,14 @@ import matplotlib.pyplot as plt
 from load_ves2d_file import load_ves2d_file
 
 # --- Load data ---
-filename = "output_BIEM/vesnet.bin"
+filename = "output_BIEM/biem_taylor.bin"
 vesx, vesy, time, N, nv, xinit, yinit = load_ves2d_file(filename)
 
 ntime = time.size
 
 # Global bounds (same as MATLAB vesx(:), vesy(:))
-xmin, xmax = vesx.min(), vesx.max()
-ymin, ymax = vesy.min(), vesy.max()
+# xmin, xmax = vesx.min(), vesx.max()
+# ymin, ymax = vesy.min(), vesy.max()
 
 # --- Time loop ---
 for it in range(0, ntime, 10):
@@ -28,9 +28,9 @@ for it in range(0, ntime, 10):
     plt.fill(x, y, color="r", edgecolor="r")
 
     # Axis settings
-    # plt.axis("equal")
-    plt.xlim(-1, 1)
-    plt.ylim(-1, 1)
+    plt.axis("equal")
+    # plt.xlim(-1, 1)
+    # plt.ylim(-1, 1)
 
     plt.title(f"{it + 1}")  # MATLAB is 1-based
 
