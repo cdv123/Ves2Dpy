@@ -1,4 +1,5 @@
 import torch
+from dataclasses import dataclass
 
 
 class PararealSolver:
@@ -13,6 +14,7 @@ class PararealSolver:
         numCores: int,
         endTime: float,
         pararealIter: int,
+        comm_info,
         file_name=None,
     ) -> torch.Tensor:
         self.endTime = endTime
@@ -41,27 +43,33 @@ class PararealSolver:
         )
 
         for k in range(pararealIter):
-            print("Parareal Iteration: ", k)
+            if comm_info.rank == 0:
+                print("Parareal Iteration: ", k)
             parallelCorrections, self.parallelCorrectionsSigma = self.parallelSweep(
                 latestVesicles, parallelCorrections
             )
 
-            self.serialSweepCorrection(
-                latestVesicles,
-                coarseSolutions,
-                newCoarseSolutions,
-                parallelCorrections,
-            )
+            if comm_info.rank == 0:
+                self.serialSweepCorrection(
+                    latestVesicles,
+                    coarseSolutions,
+                    newCoarseSolutions,
+                    parallelCorrections,
+                )
 
-            newCoarseSolutions, coarseSolutions = coarseSolutions, newCoarseSolutions
-            self.newCoarseSigma, self.coarseSigma = (
-                self.coarseSigma,
-                self.newCoarseSigma,
-            )
+                newCoarseSolutions, coarseSolutions = (
+                    coarseSolutions,
+                    newCoarseSolutions,
+                )
+                self.newCoarseSigma, self.coarseSigma = (
+                    self.coarseSigma,
+                    self.newCoarseSigma,
+                )
 
-        if file_name is not None:
-            print("Writing solution")
-            self.parallelSweep(latestVesicles, parallelCorrections, file_name)
+        if comm_info.rank == 0:
+            if file_name is not None:
+                print("Writing solution")
+                self.parallelSweep(latestVesicles, parallelCorrections, file_name)
 
         return latestVesicles
 
@@ -122,6 +130,8 @@ class PararealSolver:
             newVesicles,
             self.latestSigma,
             self.parallelCorrectionsSigma,
+            inputVesicles[0].clone(),
+            self.latestSigma.clone(),
             self.numCores,
             file_name,
         )

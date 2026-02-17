@@ -8,6 +8,7 @@ torch.set_default_dtype(torch.float32)
 from tstep_biem import TStepBiem
 from curve_batch_compile import Curve
 import numpy as np
+from torch import distributed
 
 _worker: Optional["WorkerState"] = None
 
@@ -151,7 +152,7 @@ class ParallelSolver:
     @staticmethod
     def run_worker(initPositions, sigmaStore, file_name=None, start_time=0):
         global _worker
-        outPos, outSigma =  _worker.run_solver(
+        outPos, outSigma = _worker.run_solver(
             initPositions, sigmaStore, file_name, start_time
         )
 

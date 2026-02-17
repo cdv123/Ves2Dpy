@@ -1,4 +1,7 @@
 import torch
+import os
+from torch import distributed as dist
+from dataclasses import dataclass
 
 
 def set_bg_flow(bgFlow, speed):
@@ -41,3 +44,24 @@ def set_bg_flow(bgFlow, speed):
             return torch.zeros_like(X)
 
     return get_flow
+
+
+@dataclass
+class CommInfo:
+    rank: int
+    numProcs: int
+    device: torch.device
+
+
+def init_distributed():
+    dist.init_process_group(backend="nccl")
+
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    local_rank = int(os.environ["LOCAL_RANK"])
+
+    torch.cuda.set_device(local_rank)
+    device = torch.device(f"cuda:{local_rank}")
+
+    print(f"Rank {rank}/{world_size} on GPU {local_rank}")
+    return CommInfo(rank, world_size, device)
