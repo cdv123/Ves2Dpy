@@ -91,9 +91,10 @@ class ParallelSolver:
         device,
     ):
         self.params = params.copy()
+        self.device = device
+        self.params["viscCont"] = self.params["viscCont"].to(self.device)
         self.numCores = numCores
         self.rank = rank
-        self.device = device
         self.options = options
         self.Xwalls = Xwalls
 
