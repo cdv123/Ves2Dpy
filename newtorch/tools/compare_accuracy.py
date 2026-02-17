@@ -37,10 +37,10 @@ sys.path.insert(0, parentdir)
 from curve_batch_compile import Curve
 
 # --- Load data ---
-filename = "output_BIEM/vesnet.bin"
+filename = "output_BIEM/parareal_taylor.bin"
 parareal_x, parareal_time, N, nv, parareal_xinit = load_ves2d_file_singleX(filename)
 
-filename = "output_BIEM/ground_truth.bin"
+filename = "output_BIEM/biem_taylor.bin"
 ground_x, ground_time, N, nv, ground_xinit = load_ves2d_file_singleX(filename)
 
 parareal_ntime = parareal_time.size
@@ -51,7 +51,7 @@ curve = Curve()
 center_diffs = []
 angle_errors = []
 
-for parareal_it, ground_it in zip(range(parareal_ntime), range(0, ground_ntime, 10)):
+for parareal_it, ground_it in zip(range(parareal_ntime), range(0, ground_ntime, 1)):
     ground_x_i = torch.from_numpy(ground_x[:, :, ground_it])
     parareal_x_i = torch.from_numpy(parareal_x[:, :, parareal_it])
 
