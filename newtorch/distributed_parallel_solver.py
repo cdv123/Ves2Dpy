@@ -18,8 +18,6 @@ class BIEMSolver:
         self.options = options
         self.params = params
         self.Xwalls = Xwalls
-        print("Params", self.params)
-        print("options", self.options)
         self.finalTime = self.params["T"]
         self.RS = torch.zeros(3, params["nvbd"])
         self.eta = torch.zeros(2 * params["Nbd"], params["nvbd"])
@@ -91,9 +89,10 @@ class ParallelSolver:
         device,
     ):
         self.params = params.copy()
+        self.device = device
+        self.params["viscCont"] = self.params["viscCont"].to(self.device)
         self.numCores = numCores
         self.rank = rank
-        self.device = device
         self.options = options
         self.Xwalls = Xwalls
 
@@ -126,20 +125,42 @@ class ParallelSolver:
         file_name = f"{original_file_name}_{self.rank}"
         start_time = self.params["T"] * self.rank
 
+        print(f"Rank {self.rank} Sigma dtype {sigmaStore.dtype}")
+        print(f"Rank {self.rank} Positions dtype {positions.dtype}")
+        print(f"Rank {self.rank} Default dtype {torch.get_default_dtype()}")
+
         positions, sigmaStore = self.run_solver(
             positions, sigmaStore, file_name, start_time
         )
 
         if self.rank == 0:
-            pos_scatter_list = [
+            pos_gather_list = [
                 all_positions_prime[i].contiguous() for i in range(numCores)
             ]
-            sigma_scatter_list = [
+            sigma_gather_list = [
                 all_sigma_prime[i].contiguous() for i in range(numCores)
             ]
+        else: 
+            pos_gather_list = None
+            sigma_gather_list = None
 
-        dist.gather(tensor=positions, gather_list=pos_scatter_list, dst=0)
-        dist.gather(tensor=sigmaStore, gather_list=sigma_scatter_list, dst=0)
+        dist.barrier()
+
+        print(f"Rank {self.rank} Sigma dtype {sigmaStore.dtype}")
+        print(f"Rank {self.rank} Positions dtype {positions.dtype}")
+
+        if self.rank == 0:
+            print(f"Rank {self.rank} Sigma prime dtype {all_sigma_prime.dtype}")
+            print(f"Rank {self.rank} Positions prime dtype {all_positions_prime.dtype}")
+
+        dist.gather(tensor=positions, gather_list=pos_gather_list, dst=0)
+        dist.gather(tensor=sigmaStore, gather_list=sigma_gather_list, dst=0)
+
+        if self.rank == 0:
+            pos_gather_list = [all_positions[0]] + pos_gather_list
+            sigma_gather_list = [all_sigma[0]] + sigma_gather_list
+            all_positions_prime = torch.stack(pos_gather_list, dim=0)
+            all_sigma_prime = torch.stack(sigma_gather_list, dim=0)
 
         dist.barrier()
         if self.rank == 0:
