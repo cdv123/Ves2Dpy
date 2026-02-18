@@ -164,8 +164,8 @@ if __name__ == "__main__":
     # Get original area and length
     # ------------------------------
     _, area0, len0 = oc.geomProp(X)
-    print("area0: ", area0)
-    print("len0: ", len0)
+    # print("area0: ", area0)
+    # print("len0: ", len0)
     
     with open(fileName, "wb") as fid:
         np.array([prams["N"], prams["nv"]]).flatten().astype("float64").tofile(fid)
@@ -176,18 +176,18 @@ if __name__ == "__main__":
     # Time stepping object
     # ------------------------------
     sigma = torch.zeros(prams["N"], prams["nv"]) if sigma is None else sigma
-    print(prams)
-    print(options)
+    # print(prams)
+    # print(options)
     
     
     # ------------------------------
     # Display setup
     # ------------------------------
-    print(f"{prams['nv']} vesicle(s) in {options['farField']} flow, dt: {prams['dt']}")
-    print(f"Vesicle(s) discretized with {prams['N']} points")
-    print(f"we are using {X.dtype}")
-    if options["confined"]:
-        print(f"Wall(s) discretized with {prams['Nbd']} points")
+    #print(f"{prams['nv']} vesicle(s) in {options['farField']} flow, dt: {prams['dt']}")
+    #print(f"Vesicle(s) discretized with {prams['N']} points")
+    #print(f"we are using {X.dtype}")
+    #if options["confined"]:
+    #    print(f"Wall(s) discretized with {prams['Nbd']} points")
     
     # ------------------------------
     # Time loop
@@ -205,7 +205,8 @@ if __name__ == "__main__":
     coarse_prams["dt"]*=10
     
     #coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X)
-    coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X)
+    #coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X)
+    coarseSolver = BIEMSolver(options, coarse_prams, Xwalls, X)
     parallelSolver = ParallelSolver(options, prams, Xwalls, X, sigma, numCores)
     
     

@@ -87,11 +87,14 @@ def initVes2D(options=None, prams=None):
 
 
 if __name__ == "__main__":
+    comm_info = init_distributed()
+    torch.set_default_dtype(torch.float64)
     if torch.cuda.is_available():
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         torch.set_default_device("cuda")
 
     fileName = "./output_BIEM/parareal_output.bin"  # To save simulation data
+    # fileName = None 
 
     # Assume oc is your geometry utility class (like curve_py in MATLAB)
     oc = Curve()  # You need to define this with required methods
@@ -119,7 +122,9 @@ if __name__ == "__main__":
     # ------------------------------
 
     # Initial shape
-    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
+    selected_one = [0]
+    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
+    Xics = Xics - Xics.mean()
 
     sigma = None
     X = torch.from_numpy(Xics).float().to(device)
@@ -193,15 +198,18 @@ if __name__ == "__main__":
         (torch.arange(0, prams["N"] // 2), torch.arange(-prams["N"] // 2, 0))
     ).to(X.device)  # .double()
 
-    numCores = 6
+    numCores = 4
     prams["T"] /= numCores
     coarse_prams = prams.copy()
 
     # Use a larger time step size for coarse solver
     coarse_prams["dt"] *= 10
-    comm_info = init_distributed()
 
-    coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X)
+    if comm_info.rank == 0:
+        coarseSolver = BIEMSolver(options, coarse_prams, Xwalls, X)
+    else: 
+        coarseSolver = None
+
     parallelSolver = ParallelSolver(
         options, prams, Xwalls, numCores, comm_info.rank, comm_info.device
     )
@@ -215,7 +223,7 @@ if __name__ == "__main__":
         numCores=numCores,
         endTime=prams["T"],
         pararealIter=1,
-        file_name="output_BIEM/parareal_vesnet.bin",
+        file_name=None,
         comm_info=comm_info,
     )
 

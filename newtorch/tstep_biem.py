@@ -450,7 +450,7 @@ class TStepBiem:
 
         Xn_reshaped = Xn.view(nv, 3, N)  # [nv, 3, N]
         X_ = Xn_reshaped[:, 0:2, :].reshape(nv, 2 * N).transpose(0, 1).clone()
-        sigma_ = Xn_reshaped[:, 2, :].T.clone()
+        sigma_ = Xn_reshaped[:, 2, :].T.clone().to(dtype=torch.float64)
 
         if self.confined:
             Xn = Xn[3 * nv * N :]
