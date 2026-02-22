@@ -22,6 +22,8 @@ from model_zoo.get_network_torch import (
 from math import ceil, sqrt
 from typing import Tuple
 
+from torch import distributed as dist
+
 torch.set_default_dtype(torch.float32)
 
 
@@ -231,8 +233,18 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         tenAdvNetOutputNorm,
         device,
         logger,
+        rank,
+        size,
+        nv,
     ):
         super().__init__()
+        self.rank = rank
+        self.num_ranks = size
+
+        self.chunk = nv // size
+
+        self.start = rank * self.chunk
+        self.end = (rank + 1) * self.chunk
 
         self.dt = dt  # time step size
         self.vinf = (
@@ -303,7 +315,9 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             device=device,
         )
 
-    def time_step_many_noinfo(self, Xold, tenOld, nlayers=3):
+    def time_step_many_noinfo(
+        self, Xold, tenOld, nlayers=3, local_indicies=None, targets=None
+    ):
         # background velocity on vesicles
         vback = self.vinf(Xold)
 
@@ -325,6 +339,16 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         tracJump = fBend + fTen  # total elastic force
 
         Xstand, standardizationValues = self.standardizationStep(Xold)
+        Xstand_local = Xstand[:, self.start : self.end].to(
+            self.device, non_blocking=True
+        )
+        standardizationValues_local = (
+            standardizationValues[0][self.start : self.end].to(self.device),
+            standardizationValues[1][self.start : self.end].to(self.device),
+            standardizationValues[2][:, self.start : self.end].to(self.device),
+            standardizationValues[3][:, self.start : self.end].to(self.device),
+            standardizationValues[4][self.start : self.end, :].to(self.device),
+        )
 
         # Explicit Tension at the Current Step
         # Calculate velocity induced by vesicles on each other due to elastic force
@@ -383,9 +407,16 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             f"monitoring 1st farfieldtracjump magnitude: {torch.max(torch.abs(farFieldtracJump))}"
         )
 
-        vBackSolve = self.invTenMatOnVback(
-            Xstand, standardizationValues, vback + farFieldtracJump
+        vinf = vback + farFieldtracJump
+        vinf_local = vinf[:, self.start : self.end].to(self.device, non_blocking=True)
+
+        vBack_local = self.invTenMatOnVback(
+            Xstand_local, standardizationValues_local, vinf_local
         )
+
+        gather_list = [torch.zeros_like(vBack_local) for _ in range(self.size)]
+        dist.all_gather(gather_list, vBack_local)
+        vBackSolve = torch.cat(gather_list, dim=1)
 
         selfBendSolve = self.invTenMatOnSelfBend(Xstand, standardizationValues)
 
@@ -427,7 +458,19 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         vbackTotal = vback + farFieldtracJump
 
-        Xadv = self.translateVinfwTorch(Xold, Xstand, standardizationValues, vbackTotal)
+        Xlocal = Xold[:, self.start : self.end].to(self.device, non_blocking=True)
+        vbackTotal_local = vbackTotal[:, self.start : self.end].to(
+            self.device, non_blocking=True
+        )
+
+        Xadv_local = self.translateVinfwTorch(
+            Xlocal, Xstand_local, standardizationValues_local, vbackTotal_local
+        )
+
+        gather_list = [torch.zeros_like(Xadv_local) for _ in range(self.size)]
+        dist.all_gather(gather_list, Xadv_local)
+
+        Xadv = torch.cat(gather_list, dim=1)
 
         if torch.any(torch.isnan(Xadv)) or torch.any(torch.isinf(Xadv)):
             print("Xadv input has nan or inf")
@@ -469,6 +512,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
         ],
         nlayers: int = 3,
+        local_indicies=None,
     ):
         # print('Near network predicting')
         N = Xstand.shape[0] // 2
@@ -697,9 +741,6 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         length = 1.0
         # totalForceUp = torch.concat((interpft(totalForce[:N], Nup),interpft(totalForce[N:], Nup)), dim=0)
         totalForceUp = upsample_fft(totalForce, Nup)
-
-        # start = torch.cuda.Event(enable_timing=True)
-        # end = torch.cuda.Event(enable_timing=True)
 
         # start.record()
         if first:
@@ -1040,7 +1081,6 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
     # @torch.compile(backend='cudagraphs')
     def invTenMatOnVback(self, Xstand, standardizationValues, vinf):
         # Approximate inv(Div*G*Ten)*Div*vExt
-
         # number of vesicles
         nv = Xstand.shape[1]
         # number of points of exact solve
