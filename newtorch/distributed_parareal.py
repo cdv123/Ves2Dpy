@@ -72,10 +72,9 @@ class PararealSolver:
                 self.newCoarseSigma,
             )
 
-        if comm_info.rank == 0:
-            if file_name is not None:
-                print("Writing solution")
-                self.parallelSweep(latestVesicles, parallelCorrections, file_name)
+        if file_name is not None:
+            print("Writing solution")
+            self.parallelSweep(latestVesicles, parallelCorrections, file_name)
 
         return latestVesicles
 

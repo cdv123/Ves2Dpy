@@ -120,6 +120,7 @@ class ParallelSolver:
         numCores: int,
         original_file_name: Optional[str] = None,
     ):
+        torch.set_default_dtype(torch.float64)
         if self.rank == 0:
             pos_scatter_list = [all_positions[i].contiguous() for i in range(numCores)]
             sigma_scatter_list = [all_sigma[i].contiguous() for i in range(numCores)]
