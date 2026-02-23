@@ -14,7 +14,9 @@ _worker: Optional["WorkerState"] = None
 
 
 class BIEMSolver:
-    def __init__(self, options, params, Xwalls, initPositions):
+    def __init__(
+        self, options, params, Xwalls, initPositions, comm_info, nv, new_num_ranks
+    ):
         self.options = options
         self.params = params
         self.Xwalls = Xwalls
@@ -29,6 +31,8 @@ class BIEMSolver:
             (torch.arange(0, params["N"] // 2), torch.arange(-params["N"] // 2, 0))
         ).to(initPositions.device)
 
+        self.rank = comm_info.rank
+
     def solve(
         self,
         initPositions: torch.Tensor,
@@ -38,6 +42,10 @@ class BIEMSolver:
     ):
         positions = initPositions.clone()
         newSigma = sigmaStore.clone()
+
+        if self.rank != 0:
+            return positions, newSigma
+
         if self.options["confined"]:
             self.tt.initial_confined()
 
@@ -140,7 +148,7 @@ class ParallelSolver:
             sigma_gather_list = [
                 all_sigma_prime[i].contiguous() for i in range(numCores)
             ]
-        else: 
+        else:
             pos_gather_list = None
             sigma_gather_list = None
 
