@@ -9,7 +9,6 @@ import torch.fft
 import math
 torch.set_default_dtype(torch.float32)
 from biem_support import  exactStokesSL_, exactStokesSL_onlyself, exactStokesSL_onlyself_old
-torch.set_default_device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 class Poten:
     def __init__(self, N):

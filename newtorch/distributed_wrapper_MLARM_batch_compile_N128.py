@@ -240,6 +240,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         super().__init__()
         self.rank = rank
         self.num_ranks = size
+        self.size = size
 
         self.chunk = nv // size
 
@@ -318,6 +319,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
     def time_step_many_noinfo(
         self, Xold, tenOld, nlayers=3, local_indicies=None, targets=None
     ):
+        torch.cuda.set_device(self.device)
         # background velocity on vesicles
         vback = self.vinf(Xold)
 
@@ -353,9 +355,40 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         # Explicit Tension at the Current Step
         # Calculate velocity induced by vesicles on each other due to elastic force
         # use neural networks to calculate near-singular integrals
-        velx_real, vely_real, velx_imag, vely_imag, xlayers, ylayers = (
-            self.predictNearLayers(Xstand, standardizationValues, nlayers)
+        velx_real_local, vely_real_local, velx_imag_local, vely_imag_local, xlayers_local, ylayers_local = (
+            self.predictNearLayers(Xstand_local, standardizationValues_local, nlayers)
         )
+
+        velx_real_local = velx_real_local.contiguous()
+        vely_real_local = vely_real_local.contiguous()
+        velx_imag_local = velx_imag_local.contiguous()
+        vely_imag_local = vely_imag_local.contiguous()
+        xlayers_local   = xlayers_local.contiguous()
+        ylayers_local   = ylayers_local.contiguous()
+
+        gather_velx_real = [torch.zeros_like(velx_real_local, device=self.device) for _ in range(self.size)]
+        gather_vely_real = [torch.zeros_like(vely_real_local, device=self.device) for _ in range(self.size)]
+        gather_velx_imag = [torch.zeros_like(velx_imag_local, device=self.device) for _ in range(self.size)]
+        gather_vely_imag = [torch.zeros_like(vely_imag_local, device=self.device) for _ in range(self.size)]
+
+        dist.all_gather(gather_velx_real, velx_real_local)
+        dist.all_gather(gather_vely_real, vely_real_local)
+        dist.all_gather(gather_velx_imag, velx_imag_local)
+        dist.all_gather(gather_vely_imag, vely_imag_local)
+
+        velx_real = torch.cat(gather_velx_real, dim=0)
+        vely_real = torch.cat(gather_vely_real, dim=0)
+        velx_imag = torch.cat(gather_velx_imag, dim=0)
+        vely_imag = torch.cat(gather_vely_imag, dim=0)
+
+        gather_xlayers = [torch.zeros_like(xlayers_local, device=self.device) for _ in range(self.size)]
+        gather_ylayers = [torch.zeros_like(ylayers_local, device=self.device) for _ in range(self.size)]
+
+        dist.all_gather(gather_xlayers, xlayers_local)
+        dist.all_gather(gather_ylayers, ylayers_local)
+
+        xlayers = torch.cat(gather_xlayers, dim=2)
+        ylayers = torch.cat(gather_ylayers, dim=2)
 
         # NEED SYNCHRONIZATION
         info_rbf, info_stokes = None, None
@@ -377,7 +410,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         matrices = torch.exp(
             -torch.sum((all_X[:, None] - all_X[None, ...]) ** 2, dim=-2)
         )
-        matrices += (torch.eye(all_X.shape[0]).unsqueeze(-1) * 1e-6).expand(
+        matrices += (torch.eye(all_X.shape[0], device=self.device).unsqueeze(-1) * 1e-6).expand(
             -1, -1, nv
         )  # (nlayers*N, nlayers*N, nv)
 
@@ -403,9 +436,9 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         )
 
         farFieldtracJump = filterShape(farFieldtracJump, 16)
-        print(
-            f"monitoring 1st farfieldtracjump magnitude: {torch.max(torch.abs(farFieldtracJump))}"
-        )
+        #print(
+        #    f"monitoring 1st farfieldtracjump magnitude: {torch.max(torch.abs(farFieldtracJump))}"
+        #)
 
         vinf = vback + farFieldtracJump
         vinf_local = vinf[:, self.start : self.end].to(self.device, non_blocking=True)
@@ -467,17 +500,15 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             Xlocal, Xstand_local, standardizationValues_local, vbackTotal_local
         )
 
-        gather_list = [torch.zeros_like(Xadv_local) for _ in range(self.size)]
-        dist.all_gather(gather_list, Xadv_local)
-
-        Xadv = torch.cat(gather_list, dim=1)
-
-        if torch.any(torch.isnan(Xadv)) or torch.any(torch.isinf(Xadv)):
+        if torch.any(torch.isnan(Xadv_local)) or torch.any(torch.isinf(Xadv_local)):
             print("Xadv input has nan or inf")
 
-        Xadv = filterShape(Xadv, 16)
+        Xadv_local = filterShape(Xadv_local, 16)
+        Xnew_local = self.relaxWTorchNet(Xadv_local)
+        gather_list = [torch.zeros_like(Xnew_local, device=self.device) for _ in range(self.size)]
+        dist.all_gather(gather_list, Xnew_local)
 
-        Xnew = self.relaxWTorchNet(Xadv)
+        Xnew = torch.cat(gather_list, dim=1)
 
         modes = torch.concatenate(
             (torch.arange(0, N // 2), torch.arange(-N // 2, 0))
@@ -497,10 +528,10 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         Xnew = filterShape(Xnew.to(Xold.device), 16)
 
-        print(f"monitoring tenNew magnitude: {torch.max(torch.abs(tenNew))}")
-        print(
-            f"monitoring farfieldtracjump magnitude: {torch.max(torch.abs(farFieldtracJump))}"
-        )
+        #print(f"monitoring tenNew magnitude: {torch.max(torch.abs(tenNew))}")
+        #print(
+        #    f"monitoring farfieldtracjump magnitude: {torch.max(torch.abs(farFieldtracJump))}"
+        #)
         # np.save("debug_last_tenNew.npy", tenNew.cpu().numpy())
         return Xnew, tenNew
 
@@ -524,7 +555,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         # Create the layers around a vesicle on which velocity calculated
         tracersX_ = torch.zeros(
-            (2 * N, nlayers, nv), dtype=Xstand.dtype, device=Xstand.device
+            (2 * N, nlayers, nv), dtype=Xstand.dtype, device=self.device
         )
         if nlayers == 5:
             dlayer = torch.linspace(
@@ -532,7 +563,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
                 maxLayerDist,
                 nlayers,
                 dtype=Xstand.dtype,
-                device=Xstand.device,
+                device=self.device,
             )
             tracersX_[:, 2] = Xstand
             _, tang = oc.diffProp_jac_tan(Xstand)
@@ -557,7 +588,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             )
         else:
             dlayer = torch.linspace(
-                0, maxLayerDist, nlayers, dtype=Xstand.dtype, device=Xstand.device
+                0, maxLayerDist, nlayers, dtype=Xstand.dtype, device=self.device
             )
             tracersX_[:, 0] = Xstand
             _, tang, _ = oc.diffProp(Xstand)
@@ -616,10 +647,10 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         xlayers_ = torch.zeros((N, nlayers, nv), dtype=Xstand.dtype)
         ylayers_ = torch.zeros((N, nlayers, nv), dtype=Xstand.dtype)
         xlayers_ = Xl_[
-            :N, torch.arange(nlayers * nv, device=Xstand.device).reshape(nlayers, nv)
+            :N, torch.arange(nlayers * nv, device=self.device).reshape(nlayers, nv)
         ]
         ylayers_ = Xl_[
-            N:, torch.arange(nlayers * nv, device=Xstand.device).reshape(nlayers, nv)
+            N:, torch.arange(nlayers * nv, device=self.device).reshape(nlayers, nv)
         ]
 
         return velx_real, vely_real, velx_imag, vely_imag, xlayers_, ylayers_
@@ -644,10 +675,10 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         fstand = self.standardize(
             tracJump,
-            torch.zeros((2, nv), dtype=tracJump.dtype, device=tracJump.device),
+            torch.zeros((2, nv), dtype=tracJump.dtype, device=self.device),
             rotate,
-            torch.zeros((2, nv), dtype=tracJump.dtype, device=tracJump.device),
-            torch.tensor([1.0], device=tracJump.device),
+            torch.zeros((2, nv), dtype=tracJump.dtype, device=self.device),
+            torch.tensor([1.0], device=self.device),
             sortIdx,
         )
         z = fstand[:N] + 1.0j * fstand[N:]
@@ -662,13 +693,9 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             "vnml, mv -> nvl", vely_real, fstandRe
         ) + torch.einsum("vnml, mv -> nvl", vely_imag, fstandIm)
 
-        vx_ = torch.zeros(
-            (nv, nlayers, N), device=tracJump.device, dtype=tracJump.dtype
-        )
-        vy_ = torch.zeros(
-            (nv, nlayers, N), device=tracJump.device, dtype=tracJump.dtype
-        )
-        # Destandardize
+        vx_ = torch.zeros((nv, nlayers, N), device=self.device, dtype=tracJump.dtype)
+        vy_ = torch.zeros((nv, nlayers, N), device=self.device, dtype=tracJump.dtype)
+
         vx_[torch.arange(nv), :, sortIdx.T] = velx_stand_
         vy_[torch.arange(nv), :, sortIdx.T] = vely_stand_
 
@@ -678,13 +705,13 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             VelRot_ = self.rotationOperator(
                 VelBefRot_.reshape(-1, 2 * N).T,
                 torch.repeat_interleave(-rotate, nlayers, dim=0),
-                torch.zeros(2, nv),
+                torch.zeros(2, nv, device=self.device),
             )
         else:
             VelRot_ = self.rotationOperator(
                 VelBefRot_.reshape(-1, 2 * N).T,
                 torch.repeat_interleave(-rotate, nlayers, dim=0),
-                torch.zeros(nv * nlayers),
+                torch.zeros(nv * nlayers, device=self.device),
             )
             VelRot_ = VelRot_.T.reshape(nv, nlayers, 2 * N).permute(2, 1, 0)
         velx_ = VelRot_[:N]  # (N, nlayers, nv)
@@ -1026,10 +1053,10 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         # Xinp = self.mergedAdvNetwork.preProcess(Xstand)
         Xpredict = self.mergedAdvNetwork.forward(Xstand)
 
-        Z11r_ = torch.zeros((N, N, nv), dtype=Xstand.dtype)
-        Z12r_ = torch.zeros_like(Z11r_)
-        Z21r_ = torch.zeros_like(Z11r_)
-        Z22r_ = torch.zeros_like(Z11r_)
+        Z11r_ = torch.zeros((N, N, nv), dtype=Xstand.dtype, device=self.device)
+        Z12r_ = torch.zeros_like(Z11r_, device=self.device)
+        Z21r_ = torch.zeros_like(Z11r_, device=self.device)
+        Z22r_ = torch.zeros_like(Z11r_, device=self.device)
 
         Z11r_[:, 1:] = torch.permute(Xpredict[:, :, 0, :N], (2, 0, 1))
         Z21r_[:, 1:] = torch.permute(Xpredict[:, :, 0, N:], (2, 0, 1))
@@ -1040,9 +1067,9 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         # only sort points and rotate to pi/2 (no translation, no scaling)
         vinf_stand = self.standardize(
             vinf,
-            torch.zeros((2, nv), dtype=vinf.dtype),
+            torch.zeros((2, nv), dtype=vinf.dtype, device=self.device),
             rotate,
-            torch.zeros((2, nv), dtype=vinf.dtype),
+            torch.zeros((2, nv), dtype=vinf.dtype, device=self.device),
             1,
             sortIdx,
         )
@@ -1061,7 +1088,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         Xnew = torch.zeros_like(Xold)
         MVinf = torch.zeros_like(MVinf_stand)
         idx = torch.vstack([sortIdx.T, sortIdx.T + N])
-        MVinf[idx, torch.arange(nv, device=Xstand.device)] = MVinf_stand
+        MVinf[idx, torch.arange(nv, device=self.device)] = MVinf_stand
         MVinf = self.rotationOperator(
             MVinf, -rotate, torch.zeros((2, nv), dtype=MVinf.dtype)
         )
@@ -1094,18 +1121,18 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         out = self.tenAdvNetwork.postProcess(Xpredict)  # shape: (127, nv, 2, 128)
 
         # Approximate the multiplication Z = inv(DivGT)DivPhi_k
-        Z1 = torch.zeros((N, N, nv), dtype=Xstand.dtype)
-        Z2 = torch.zeros((N, N, nv), dtype=Xstand.dtype)
+        Z1 = torch.zeros((N, N, nv), dtype=Xstand.dtype, device=self.device)
+        Z2 = torch.zeros((N, N, nv), dtype=Xstand.dtype, device=self.device)
 
         Z1[:, 1:] = torch.permute(out[:, :, 0], (2, 0, 1))
         Z2[:, 1:] = torch.permute(out[:, :, 1], (2, 0, 1))
 
-        vBackSolve = torch.zeros((N, nv), dtype=Xstand.dtype)
+        vBackSolve = torch.zeros((N, nv), dtype=Xstand.dtype, device=self.device)
         vinfStand = self.standardize(
             vinf,
-            torch.zeros((2, nv), dtype=Xstand.dtype),
+            torch.zeros((2, nv), dtype=Xstand.dtype, device=self.device),
             rotate,
-            torch.zeros((2, nv), dtype=Xstand.dtype),
+            torch.zeros((2, nv), dtype=Xstand.dtype, device=self.device),
             1,
             sortIdx,
         )
@@ -1121,7 +1148,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         )
 
         # Destandardize the multiplication
-        vBackSolve[sortIdx.T, torch.arange(nv, device=Xstand.device)] = MVinfStand
+        vBackSolve[sortIdx.T, torch.arange(nv, device=self.device)] = MVinfStand
 
         return vBackSolve
 
@@ -1137,16 +1164,16 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         tenPredictStand = self.tenSelfNetwork.forward(Xstand)
 
-        tenPred = torch.zeros((N, nv), dtype=Xstand.dtype, device=Xstand.device)
+        tenPred = torch.zeros((N, nv), dtype=Xstand.dtype, device=self.device)
         if nv == 1:
             col = (
-                torch.arange(nv, device=Xstand.device)
+                torch.arange(nv, device=self.device)
                 .unsqueeze(0)
                 .expand(sortIdx.shape[0], -1)
             )
             tenPred[sortIdx, col] = tenPredictStand / scaling**2
         else:
-            tenPred[sortIdx.T, torch.arange(nv, device=Xstand.device)] = (
+            tenPred[sortIdx.T, torch.arange(nv, device=self.device)] = (
                 tenPredictStand / scaling**2
             )
 
@@ -1182,8 +1209,8 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         XrotSort = torch.vstack(
             (
-                Xrotated[multi_sortIdx.T, torch.arange(nv, device=X.device)],
-                Xrotated[multi_sortIdx.T + N, torch.arange(nv, device=X.device)],
+                Xrotated[multi_sortIdx.T, torch.arange(nv, device=self.device)],
+                Xrotated[multi_sortIdx.T + N, torch.arange(nv, device=self.device)],
             )
         )
 
@@ -1209,8 +1236,8 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         # Change ordering back
         X = torch.zeros_like(XrotSort)
-        X[sortIdx.T, torch.arange(nv, device=XrotSort.device)] = XrotSort[:N]
-        X[sortIdx.T + N, torch.arange(nv, device=XrotSort.device)] = XrotSort[N:]
+        X[sortIdx.T, torch.arange(nv, device=self.device)] = XrotSort[:N]
+        X[sortIdx.T + N, torch.arange(nv, device=self.device)] = XrotSort[N:]
 
         # Take translation back
         X = self.translateOp(X, -trans)
@@ -1243,7 +1270,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         theta = torch.arctan2(Xref[N:], Xref[:N])
         start_id = torch.argmin(torch.where(theta < 0, 100, theta), dim=0)
         multi_sortIdx = (
-            start_id + torch.arange(N, device=Xref.device).unsqueeze(-1)
+            start_id + torch.arange(N, device=self.device).unsqueeze(-1)
         ) % N
         multi_sortIdx = multi_sortIdx.int().T
 
@@ -1255,7 +1282,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
     def rotationOperator(self, X, theta, rotCent):
         """Shan: compatible with multi ves
         theta of shape (1,nv), rotCent of shape (2,nv)"""
-        Xrot = torch.zeros_like(X)
+        Xrot = torch.zeros_like(X, device=self.device)
         x = X[: len(X) // 2] - rotCent[0]
         y = X[len(X) // 2 :] - rotCent[1]
 
@@ -1280,7 +1307,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         combining rotate and trans
         """
 
-        Xrot = torch.zeros_like(X, device=X.device)
+        Xrot = torch.zeros_like(X, device=self.device)
         x = X[: len(X) // 2] - rotCent[0]
         y = X[len(X) // 2 :] - rotCent[1]
 
@@ -1291,3 +1318,4 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         Xrot[: len(X) // 2] = xrot + rotCent[0] + transXY[0]
         Xrot[len(X) // 2 :] = yrot + rotCent[1] + transXY[1]
         return Xrot
+

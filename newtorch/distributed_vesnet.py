@@ -1,6 +1,9 @@
 # %%
-import numpy as np
 import torch
+from helper_functions import init_distributed
+comm_info = init_distributed()
+torch.cuda.set_device(comm_info.device)
+import numpy as np
 
 torch.set_default_dtype(torch.float32)
 import torch.backends.cudnn as cudnn
@@ -13,7 +16,7 @@ torch._dynamo.reset()
 # from curve_batch import Curve
 from curve_batch_compile import Curve
 
-from wrapper_MLARM_batch_compile_N128 import MLARM_manyfree_py
+from distributed_wrapper_MLARM_batch_compile_N128 import MLARM_manyfree_py
 from math import sqrt
 import time
 from scipy.io import loadmat
@@ -24,11 +27,10 @@ import logging
 from torch import distributed as dist
 from poten import Poten
 
-torch.cuda.synchronize()
-torch.cuda.cudart().cudaProfilerStart()
+torch.cuda.set_device(comm_info.device)
+torch.set_default_device(comm_info.device)
 
-
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = comm_info.device 
 cur_dtype = torch.float32
 
 logger = logging.getLogger(__name__)
@@ -104,7 +106,7 @@ vinf = set_bg_flow(bgFlow, speed)
 
 # Time stepping
 dt = 1e-5  # Time step size
-Th = 100 * dt  # Time horizon
+Th = 1000 * dt  # Time horizon
 
 # Vesicle discretization
 N = 128  # Number of points to discretize vesicle
@@ -194,6 +196,8 @@ tenAdvNetOutputNorm = np.load(
     "../../files2runVes2Dpy/2024Oct_advten_out_para_allmodes.npy"
 )
 
+torch.set_default_dtype(torch.float32)
+
 mlarm = MLARM_manyfree_py(
     dt,
     vinf,
@@ -213,6 +217,9 @@ mlarm = MLARM_manyfree_py(
     torch.from_numpy(tenAdvNetOutputNorm).to(cur_dtype),
     device=device,
     logger=logger,
+    rank=comm_info.rank,
+    size=comm_info.numProcs,
+    nv=nv,
 )
 
 mlarm.nearNetwork.model.eval()
@@ -221,6 +228,13 @@ mlarm.tenSelfNetwork.model.eval()
 mlarm.tenAdvNetwork.model.eval()
 mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="reduce-overhead")
 # mlarm.advNetwork.model  = torch.compile(mlarm.advNetwork.model,  mode="max-autotune")
+
+print("default dtype:", torch.get_default_dtype())
+print("near param dtype:", next(mlarm.nearNetwork.model.parameters()).dtype)
+print("relax param dtype:", next(mlarm.relaxNetwork.model.parameters()).dtype)
+print("tenSelf param dtype:", next(mlarm.tenSelfNetwork.model.parameters()).dtype)
+print("tenAdv param dtype:", next(mlarm.tenAdvNetwork.model.parameters()).dtype)
+
 mlarm.relaxNetwork.model = torch.compile(
     mlarm.relaxNetwork.model, mode="reduce-overhead"
 )
@@ -314,3 +328,4 @@ for it in tqdm(range(int(Th // dt))):
 
 torch.cuda.synchronize()
 torch.cuda.cudart().cudaProfilerStop()
+

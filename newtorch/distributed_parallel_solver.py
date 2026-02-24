@@ -15,7 +15,7 @@ _worker: Optional["WorkerState"] = None
 
 class BIEMSolver:
     def __init__(
-        self, options, params, Xwalls, initPositions, comm_info, nv, new_num_ranks
+        self, options, params, Xwalls, initPositions, rank, nv, new_num_ranks
     ):
         self.options = options
         self.params = params
@@ -31,7 +31,7 @@ class BIEMSolver:
             (torch.arange(0, params["N"] // 2), torch.arange(-params["N"] // 2, 0))
         ).to(initPositions.device)
 
-        self.rank = comm_info.rank
+        self.rank = rank
 
     def solve(
         self,
@@ -42,9 +42,6 @@ class BIEMSolver:
     ):
         positions = initPositions.clone()
         newSigma = sigmaStore.clone()
-
-        if self.rank != 0:
-            return positions, newSigma
 
         if self.options["confined"]:
             self.tt.initial_confined()
@@ -103,9 +100,10 @@ class ParallelSolver:
         self.rank = rank
         self.options = options
         self.Xwalls = Xwalls
+        self.nv = params["nv"] 
 
     def run_solver(self, positions, sigmaStore, file_name, start_time):
-        self.solver = BIEMSolver(self.options, self.params, self.Xwalls, positions)
+        self.solver = BIEMSolver(self.options, self.params, self.Xwalls, positions, 0, self.nv, 1)
 
         return self.solver.solve(positions, sigmaStore, file_name, start_time)
 
@@ -141,6 +139,12 @@ class ParallelSolver:
         positions, sigmaStore = self.run_solver(
             positions, sigmaStore, file_name, start_time
         )
+
+        positions = positions.contiguous()
+        sigmaStore = sigmaStore.contiguous()
+        
+        print(f"Positions shape", positions.shape)
+        print(f"sigmaStore shape", sigmaStore.shape)
 
         if self.rank == 0:
             pos_gather_list = [

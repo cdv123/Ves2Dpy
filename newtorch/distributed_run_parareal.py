@@ -12,7 +12,7 @@ from scipy.io import loadmat
 from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
 from distributed_parareal import PararealSolver
-from parareal_vesnet import VesNetSolver
+from distributed_parareal_vesnet import VesNetSolver
 from distributed_parallel_solver import ParallelSolver, BIEMSolver
 from helper_functions import init_distributed
 
@@ -122,13 +122,15 @@ if __name__ == "__main__":
     # ------------------------------
 
     # Initial shape
-    selected_one = [0]
-    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
-    Xics = Xics - Xics.mean()
+    #selected_one = [0]
+    #Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
+    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
+    #Xics = Xics - Xics.mean()
 
     sigma = None
     X = torch.from_numpy(Xics).float().to(device)
     X = interpft_vec(X, 128).to(device)
+    nv = X.shape[1]
 
     # ------------------------------
     # Simulation parameters and options
@@ -205,10 +207,7 @@ if __name__ == "__main__":
     # Use a larger time step size for coarse solver
     coarse_prams["dt"] *= 10
 
-    if comm_info.rank == 0:
-        coarseSolver = BIEMSolver(options, coarse_prams, Xwalls, X)
-    else: 
-        coarseSolver = None
+    coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X, comm_info, nv, 4)
 
     parallelSolver = ParallelSolver(
         options, prams, Xwalls, numCores, comm_info.rank, comm_info.device

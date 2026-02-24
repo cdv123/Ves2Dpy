@@ -12,6 +12,7 @@ class VesNetSolver:
     def __init__(
         self, options, params, Xwalls, initPositions, comm_info, nv, new_num_ranks
     ):
+        self.rank = comm_info.rank
         torch.set_default_dtype(torch.float32)
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         cur_dtype = torch.float32
@@ -153,7 +154,7 @@ class VesNetSolver:
         rank=None,
     ):
         positions = initPositions.clone()
-        if rank < self.new_num_ranks:
+        if self.rank < self.new_num_ranks:
             return positions, sigmaStore
 
         sigmaStore = sigmaStore.to(dtype=torch.float32)

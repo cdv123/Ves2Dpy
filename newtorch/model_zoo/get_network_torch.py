@@ -159,7 +159,7 @@ class MergedAdvNetwork:
         # prepare fourier basis
         theta = torch.arange(N, device=device)/N*2*torch.pi
         theta = theta.reshape(N,1)
-        bases = 1/N * torch.exp(1j*theta*torch.arange(N).reshape(1,N))
+        bases = 1/N * torch.exp(1j*theta*torch.arange(N, device=device).reshape(1,N))
         # specify which mode
         rr, ii = torch.real(bases[:,s-1:t]), np.imag(bases[:,s-1:t])
         basis = torch.concat((rr,ii), dim=0).T.reshape(1,rep,256)
