@@ -17,7 +17,7 @@ from curve_batch_compile import Curve
 # from wrapper_MLARM_batch import MLARM_manyfree_py
 # from wrapper_MLARM_batch_profiling import MLARM_manyfree_py
 # from wrapper_MLARM_batch_opt_N32 import MLARM_manyfree_py
-from wrapper_MLARM_batch_compile_N32 import MLARM_manyfree_py
+from wrapper_MLARM_batch_compile_N32_new import MLARM_manyfree_py
 from math import sqrt
 import time
 from scipy.io import loadmat
@@ -44,7 +44,7 @@ def simulate(
     # fileName = './output/parabolic_shape8_nv2000.bin'  # To save simulation data
     # fileName = './output/parabolic_shape8_nv2000_auglag_2025Feb.bin'  # To save simulation data
     # fileName = './output/parabolic_ellipse.bin'  # To save simulation data
-    fileName = "./output/shear_w_relax.bin"  # To save simulation data
+    fileName = "./output_N32/shear_w_relax.bin"  # To save simulation data
     # fileName = './output/novel.bin'  # To save simulation data
     # fileName = './output/novel1.bin'  # To save simulation data
     # fileName = './output/TG_nv32_N32_25fall.bin'  # To save simulation data
@@ -147,9 +147,10 @@ def simulate(
 
     # /work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/
 
-    Xics = np.load(
-        "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/shear_N32.npy"
-    )  ### INIT SHAPES FROM THE DATA SET
+    #Xics = np.load(
+    #    "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/shear_N32.npy"
+    #)  ### INIT SHAPES FROM THE DATA SET
+    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get('X')
     Xics = Xics[:, 1:2]
     print(Xics.shape)
     # Xics = np.load("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/48vesTG_N32.npy") ### INIT SHAPES FROM THE DATA SET
@@ -203,10 +204,12 @@ def simulate(
     # Load the normalization (mean, std) values for the networks
     # ADV Net retrained in Oct 2024
     adv_net_input_norm = np.load(
-        "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/adv_fft_ds32/2024Oct_advfft_in_para_downsample_all_mode.npy"
+        # "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/adv_fft_ds32/2024Oct_advfft_in_para_downsample_all_mode.npy"
+        "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/adv_trained/2024Oct_advfft_in_para_downsample_all_mode.npy"
     )
     adv_net_output_norm = np.load(
-        "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/adv_fft_ds32/2024Oct_advfft_out_para_downsample_all_mode.npy"
+        # "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/adv_fft_ds32/2024Oct_advfft_out_para_downsample_all_mode.npy"
+        "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/adv_trained/2024Oct_advfft_out_para_downsample_all_mode.npy"
     )
     # Relax Net
     relax_net_input_norm = np.array(
@@ -227,18 +230,20 @@ def simulate(
     )
 
     nearNetInputNorm = np.load(
-        "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/near_trained/in_param_downsample32_allmode.npy"
+        # "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/near_trained/in_param_downsample32_allmode.npy"
+        "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/near_trained/in_param_downsample32_allmode.npy"
     )
     nearNetOutputNorm = np.load(
-        "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/near_trained/out_param_downsample32_allmode.npy"
+        # "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/near_trained/out_param_downsample32_allmode.npy"
+        "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/near_trained/out_param_downsample32_allmode.npy"
     )
     # inner Near Field
-    innerNearNetInputNorm = np.load(
-        "/work/09452/alberto47/ls6/vesicle_nearF2024/trained_disth_nocoords/inner_downsample32/inner_near_in_param_allmodes.npy"
-    )
-    innerNearNetOutputNorm = np.load(
-        "/work/09452/alberto47/ls6/vesicle_nearF2024/trained_disth_nocoords/inner_downsample32/inner_near_out_param_allmodes.npy"
-    )
+    # innerNearNetInputNorm = np.load(
+    #     "/work/09452/alberto47/ls6/vesicle_nearF2024/trained_disth_nocoords/inner_downsample32/inner_near_in_param_allmodes.npy"
+    # )
+    # innerNearNetOutputNorm = np.load(
+    #     "/work/09452/alberto47/ls6/vesicle_nearF2024/trained_disth_nocoords/inner_downsample32/inner_near_out_param_allmodes.npy"
+    # )
 
     # self ten network updated by using a 156k dataset
     # tenSelfNetInputNorm = np.array([0.00016914503066800535, 0.06278414279222488,
@@ -258,10 +263,12 @@ def simulate(
     tenSelfNetOutputNorm = np.array([337.7682800292969, 458.4842834472656])
 
     tenAdvNetInputNorm = np.load(
-        "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/advten_downsample32/2024Nov_advten_ds32_in_para_allmodes.npy"
+        # "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/advten_downsample32/2024Nov_advten_ds32_in_para_allmodes.npy"
+        "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/advten_trained_downsample32/2024Nov_advten_ds32_in_para_allmodes.npy"
     )
     tenAdvNetOutputNorm = np.load(
-        "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/advten_downsample32/2024Nov_advten_ds32_out_para_allmodes.npy"
+        # "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/advten_downsample32/2024Nov_advten_ds32_out_para_allmodes.npy"
+        "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/advten_trained_downsample32/2024Nov_advten_ds32_out_para_allmodes.npy"
     )
     # adding curvature
     # tenAdvNetInputNorm = np.load("/work/09452/alberto47/ls6/vesicle_advten/norm_para/2025Feb_downsample_in_para.npy")
@@ -281,8 +288,10 @@ def simulate(
         torch.from_numpy(relax_net_output_norm).to(cur_dtype),
         torch.from_numpy(nearNetInputNorm).to(cur_dtype),
         torch.from_numpy(nearNetOutputNorm).to(cur_dtype),
-        torch.from_numpy(innerNearNetInputNorm).to(cur_dtype),
-        torch.from_numpy(innerNearNetOutputNorm).to(cur_dtype),
+        None,
+        None,
+        #torch.from_numpy(innerNearNetInputNorm).to(cur_dtype),
+        #torch.from_numpy(innerNearNetOutputNorm).to(cur_dtype),
         torch.from_numpy(tenSelfNetInputNorm).to(cur_dtype),
         torch.from_numpy(tenSelfNetOutputNorm).to(cur_dtype),
         torch.from_numpy(tenAdvNetInputNorm).to(cur_dtype),
@@ -305,13 +314,13 @@ def simulate(
             break
 
     # ellipse = loadmat("../VF25_TG32Ves.mat").get('X')[:, 0:1]
-    ellipse = np.load("relaxed_shape.npy")
-    ellipse = torch.from_numpy(ellipse).float().to(device)
-    center_ = oc.getPhysicalCenter(ellipse)
-    ellipse[:32, :] -= center_[0]
-    ellipse[32:, :] -= center_[1]
-    mlarm.ellipse = ellipse
-    logger.info(f"center is {oc.getPhysicalCenter(mlarm.ellipse)}")
+    #ellipse = np.load("relaxed_shape.npy")
+    #ellipse = torch.from_numpy(ellipse).float().to(device)
+    #center_ = oc.getPhysicalCenter(ellipse)
+    #ellipse[:32, :] -= center_[0]
+    #ellipse[32:, :] -= center_[1]
+    #mlarm.ellipse = ellipse
+    #logger.info(f"center is {oc.getPhysicalCenter(mlarm.ellipse)}")
 
     if save_intermediate:
         mlarm.Ten = torch.zeros((32, nv, 100))

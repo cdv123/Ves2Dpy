@@ -18,7 +18,7 @@ from torch.profiler import profile, record_function, ProfilerActivity
 # from scipy.interpolate import RBFInterpolator as scipyinterp_cpu
 # from cupyx.scipy.interpolate import RBFInterpolator as scipyinterp_gpu
 from model_zoo_N32.get_network_torch_N32 import RelaxNetwork, TenSelfNetwork, MergedAdvNetwork, MergedTenAdvNetwork, MergedNearFourierNetwork, MergedInnerNearFourierNetwork
-from model_zoo_N32.get_network_torch_N32 import TenSelfNetwork_curv
+# from model_zoo_N32.get_network_torch_N32 import TenSelfNetwork_curv
 # from cuda_practice.my_cuda_matvec_numba import block_diag_matvec
 # from cuda_practice.cuda_cg import solve_cg, solve_cg_onebyone
 # from cuda_practice.minres_my_cuda_matvec_numba import block_diag_matvec
@@ -27,7 +27,7 @@ from model_zoo_N32.get_network_torch_N32 import TenSelfNetwork_curv
 # from numba import cuda, float32
 from math import ceil, sqrt
 import time
-import mat73
+# import mat73
 # import scipy.io as scio
 from typing import List, Tuple
 
@@ -655,30 +655,35 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         self.advNetInputNorm = advNetInputNorm
         self.advNetOutputNorm = advNetOutputNorm
         self.mergedAdvNetwork = MergedAdvNetwork(self.advNetInputNorm.to(device), self.advNetOutputNorm.to(device), 
-                                model_path="/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/adv_fft_ds32/2024Oct_ves_merged_adv.pth", 
+                                #model_path="/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/adv_fft_ds32/2024Oct_ves_merged_adv.pth", 
+                                #model_path="/cosma/home/do022/dc-dubo2/vesicle-fork/latest_128/2024Oct_advection/2024Oct_ves_merged_adv.pth",
+                                model_path="/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/adv_trained/adv_fft_ds32/ves_adv_downsample_fft_2024Oct_mode30.pth",
                                 device = device)
         
         # Normalization values for relaxation network
         self.relaxNetInputNorm = relaxNetInputNorm
         self.relaxNetOutputNorm = relaxNetOutputNorm
         self.relaxNetwork = RelaxNetwork(self.dt, self.relaxNetInputNorm.to(device), self.relaxNetOutputNorm.to(device), 
-                                model_path="/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/Ves_relax_downsample_DIFF.pth",
+                                #model_path="/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/Ves_relax_downsample_DIFF.pth",
+                                model_path="/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/Ves_relax_1e-5_downsample_DIFF.pth",
                                 device = device)
         
         # # Normalization values for near field networks
         self.nearNetInputNorm = nearNetInputNorm
         self.nearNetOutputNorm = nearNetOutputNorm
         self.nearNetwork = MergedNearFourierNetwork(self.nearNetInputNorm.to(device), self.nearNetOutputNorm.to(device),
+                                model_path="/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/near_trained/Ves_downsample_nearFourier_nocoords_mode32.pth",
+                                # model_path="../../latest_128/nearFourier_dist_h/ves_merged_disth_nearFourier.pth",
                                 # model_path="../trained/ves_merged_nearFourier.pth",
-                                model_path="/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/near_trained/ves_merged_disth_nearFourier.pth",
+                                #model_path="/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/near_trained/ves_merged_disth_nearFourier.pth",
                                 device = device)
         
         # # Normalization values for inner near field networks
         self.innerNearNetInputNorm = innerNearNetInputNorm
         self.innerNearNetOutputNorm = innerNearNetOutputNorm
-        self.innerNearNetwork = MergedInnerNearFourierNetwork(self.innerNearNetInputNorm.to(device), self.innerNearNetOutputNorm.to(device),
-                                model_path="/work/09452/alberto47/vista/Ves2Dpy/trained/2025ves_merged_disth_innerNearFourier.pth",
-                                device = device)
+        #self.innerNearNetwork = MergedInnerNearFourierNetwork(self.innerNearNetInputNorm.to(device), self.innerNearNetOutputNorm.to(device),
+        #                        model_path="/work/09452/alberto47/vista/Ves2Dpy/trained/2025ves_merged_disth_innerNearFourier.pth",
+        #                        device = device)
         
         # Normalization values for tension-self network
         # self.tenSelfNetInputNorm = tenSelfNetInputNorm
@@ -690,125 +695,20 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         
         self.tenSelfNetInputNorm = tenSelfNetInputNorm
         self.tenSelfNetOutputNorm = tenSelfNetOutputNorm
-        self.tenSelfNetwork = TenSelfNetwork_curv(self.tenSelfNetInputNorm.to(device), self.tenSelfNetOutputNorm.to(device), 
+        self.tenSelfNetwork = TenSelfNetwork(self.tenSelfNetInputNorm.to(device), self.tenSelfNetOutputNorm.to(device), 
                                 # model_path = "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/ves_downsample_selften_zerolevel.pth",
-                                model_path="/work/09452/alberto47/ls6/vesicle_selften/save_models/Ves_2025Feb_downsample_selften_zerolevel_12blks_loss_0.01105_2242401_cuda2.pth",
-                                device = device, oc=oc)
+                                # model_path="/work/09452/alberto47/ls6/vesicle_selften/save_models/Ves_2025Feb_downsample_selften_zerolevel_12blks_loss_0.01105_2242401_cuda2.pth",
+                                model_path="/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/ves_downsample_selften_zerolevel.pth",
+                                device = device)
         
         # Normalization values for tension-advection networks
         self.tenAdvNetInputNorm = tenAdvNetInputNorm
         self.tenAdvNetOutputNorm = tenAdvNetOutputNorm
         self.tenAdvNetwork = MergedTenAdvNetwork(self.tenAdvNetInputNorm.to(device), self.tenAdvNetOutputNorm.to(device), 
                                 # model_path="/work/09452/alberto47/vista/Ves2Dpy/trained/2025Feb_merged_advten.pth", 
-                                model_path="/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/advten_downsample32/2024Oct_merged_advten.pth", 
+                                model_path="/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/2024Oct_ves_merged_advten.pth",
+                                # model_path="/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/trained/advten_downsample32/2024Oct_merged_advten.pth", 
                                 device = device)
-    
-
-    # def time_step_many(self, Xold, tenOld):
-    #     # oc = self.oc
-    #     torch.set_default_device(Xold.device)
-    #     # background velocity on vesicles
-    #     vback = self.vinf(Xold)
-        
-
-    #     # build vesicle class at the current step
-    #     vesicle = capsules(Xold, [], [], self.kappa, 1)
-    #     N = Xold.shape[0] // 2
-    #     nv = Xold.shape[1]
-    #     Nup = ceil(sqrt(N)) * N
-        
-    #     vesicleUp = capsules(upsample_fft(Xold, Nup), [],[], self.kappa, 1)
-
-    #     # Compute velocity induced by repulsion force
-    #     repForce = torch.zeros_like(Xold)
-    #     # if self.use_repulsion:
-    #     #     repForce = vesicle.repulsionForce(Xold, self.repStrength)
-
-    #     # Compute bending forces + old tension forces
-    #     fBend = vesicle.bendingTerm(Xold)
-    #     fTen = vesicle.tensionTerm(tenOld)
-    #     tracJump = fBend + fTen  # total elastic force
-
-    #     Xstand, standardizationValues = self.standardizationStep(Xold)
-
-    #     # Explicit Tension at the Current Step
-    #     # Calculate velocity induced by vesicles on each other due to elastic force
-    #     # use neural networks to calculate near-singular integrals
-    #     # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=False) as prof:
-    #     #     with record_function("predictNearLayers"):
-    #     velx_real, vely_real, velx_imag, vely_imag, xlayers, ylayers = self.predictNearLayers(Xstand, standardizationValues)
-
-    #     # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=30))
-
-    #     # info = self.nearZoneInfo(vesicle)
-    #     # info_rbf, info_stokes = self.naiveNearZoneInfo(vesicle.X, vesicleUp.X)
-    #     info_rbf, info_stokes = None, None
-
-    #     const = 0.672 * self.len0[0].item()
-    #     all_X = torch.concat((xlayers.reshape(-1,1,nv), ylayers.reshape(-1,1,nv)), dim=1) # (3 * N, 2, nv), 2 for x and y
-    #     all_X = all_X /const * N   
-    #     matrices = torch.exp(- torch.sum((all_X[:, None] - all_X[None, ...])**2, dim=-2)) #+ 1e-6 * torch.eye(5*N).unsqueeze(-1) # (3*N, 3*N, nv)
-    #     L = torch.linalg.cholesky(matrices.permute(2, 0, 1))
-
-        
-    #     farFieldtracJump, info_rbf, info_stokes = self.computeStokesInteractions(vesicle, vesicleUp, info_rbf, info_stokes, L, tracJump, repForce, velx_real, vely_real, velx_imag, vely_imag, 
-    #                                     xlayers, ylayers, standardizationValues, first=True)
-    #     farFieldtracJump = filterShape(farFieldtracJump, 4)
-
-
-    #     # if not torch.allclose(info, info_.reshape(nv, N, nv, Nup)):
-    #     #     raise ValueError('info not equal')
-        
-    #     vBackSolve = self.invTenMatOnVback(Xstand, standardizationValues, vback + farFieldtracJump)
-
-    #     selfBendSolve = self.invTenMatOnSelfBend(Xstand, standardizationValues)
-
-
-    #     tenNew = -(vBackSolve + selfBendSolve)
-    #     # tenNew = filterTension(tenNew, 4*N, 16)
-
-    #     # update the elastic force with the new tension
-    #     fTen_new = vesicle.tensionTerm(tenNew)
-    #     tracJump = fBend + fTen_new
-
-    #     # Calculate far-field again and correct near field before advection
-    #     # use neural networks to calculate near-singular integrals
-    #     farFieldtracJump, info_rbf, info_stokes = self.computeStokesInteractions(vesicle, vesicleUp, info_rbf, info_stokes, L, tracJump, repForce, velx_real, vely_real, velx_imag, vely_imag, 
-    #                                             xlayers, ylayers, standardizationValues, first=False)
-    #     farFieldtracJump = filterShape(farFieldtracJump, 4)
-
-    #     # Total background velocity
-    #     vbackTotal = vback + farFieldtracJump
-
-    #     # Compute the action of dt*(1-M) on Xold
-
-    #     Xadv = self.translateVinfwTorch(Xold, Xstand, standardizationValues, vbackTotal)
-
-
-    #     Xadv = filterShape(Xadv, 8)
-    #     # XadvC = oc.correctAreaAndLength(Xadv, self.area0, self.len0)
-    #     # Xadv = oc.alignCenterAngle(Xadv, XadvC.to(Xold.device))
-        
-    #     # Compute the action of relax operator on Xold + Xadv
-    #     Xnew = self.relaxWTorchNet(Xadv)
-
-    #     modes = torch.concatenate((torch.arange(0, N // 2), torch.arange(-N // 2, 0))).to(Xold.device)
-    #     XnewC = Xnew.clone()
-    #     for _ in range(5):
-    #         Xnew, flag = self.oc.redistributeArcLength(Xnew, modes)
-    #         if flag:
-    #             break
-    #     Xnew = self.oc.alignCenterAngle(XnewC, Xnew.to(Xold.device))
-
-    #     Xnew = self.oc.correctAreaAndLength(Xnew, self.area0, self.len0)
-
-    #     Xnew = filterShape(Xnew.to(Xold.device), 8)
-
-    #     # MLARM_manyfree_py.info, MLARM_manyfree_py.dis2, MLARM_manyfree_py.diffx, MLARM_manyfree_py.diffy, MLARM_manyfree_py.full_mask = None, None, None, None, None
-
-    #     return Xnew, tenNew
-    
-
     
     def time_step_many_timing_noinfo(self, Xold, tenOld, nlayers=5):
         # oc = self.oc

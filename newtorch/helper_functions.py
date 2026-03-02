@@ -53,15 +53,18 @@ class CommInfo:
     device: torch.device
 
 
-def init_distributed():
-    dist.init_process_group(backend="nccl")
+def init_distributed(comm_info):
+    dist.init_process_group(backend="nccl", world_size=comm_info.numProcs, rank=comm_info.device)
 
-    rank = dist.get_rank()
-    world_size = dist.get_world_size()
     local_rank = int(os.environ["LOCAL_RANK"])
 
-    torch.cuda.set_device(local_rank)
-    device = torch.device(f"cuda:{local_rank}")
+    if local_rank == 1:
+        torch.cuda.set_device(local_rank + 1)
+        device = torch.device(f"cuda:{local_rank+1}")
+    else:
+        torch.cuda.set_device(local_rank)
+        device = torch.device(f"cuda:{local_rank}")
+
 
     print(f"Rank {rank}/{world_size} on GPU {local_rank}")
     return CommInfo(rank, world_size, device)

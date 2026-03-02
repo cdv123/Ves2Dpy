@@ -1,3 +1,8 @@
+from petsc4py import PETSc
+
+print(PETSc.Sys.getVersion())
+print("CUDA available:", PETSc.Sys.hasExternalPackage("cuda"))
+
 import torch
 import numpy as np
 import math
@@ -23,8 +28,6 @@ class gmres_counter(object):
 
     def __call__(self, rk=None):
         self.niter += 1
-        # if self._disp:
-        #    print('iter %3i\trk = %s' % (self.niter, str(rk)))
 
 
 class TStepBiem:
@@ -434,7 +437,7 @@ class TStepBiem:
                 )
         else:
             Xn, info = gmres(
-                cupy_lin_op, cp.asarray(rhs), tol=self.gmresTol, maxiter=self.gmresMaxIter
+                cupy_lin_op, rhs, tol=self.gmresTol, maxiter=self.gmresMaxIter
             )
 
         # print(f"gmres takes {counter.niter} iterations")
@@ -1000,3 +1003,4 @@ class TStepBiem:
         # Scale the velocity
         vInf *= speed
         return vInf
+

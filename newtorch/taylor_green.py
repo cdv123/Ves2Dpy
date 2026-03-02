@@ -80,6 +80,7 @@ def initVes2D(options=None, prams=None):
     return options, prams
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(device)
 
 if torch.cuda.is_available():
     torch.set_default_device("cuda")
@@ -114,9 +115,12 @@ Xwalls = None
 # ------------------------------
 
 # Initial shape
-# selected_one = [0]
-#Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
+selected_one = [0]
 Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
+#Xics = loadmat("../../npy-files/VF25_TG32Ves.mat")
+#Xics = loadmat("../../npy-files/shearIC.mat").get("Xic")
+#Xics = loadmat("../../npy-files/shearIC.mat")
+#print(Xics)
 #Xics = Xics - Xics.mean()
 
 sigma = None
@@ -131,14 +135,14 @@ prams["N"] = X.shape[0] // 2
 prams["nv"] = X.shape[1]
 prams["dt"] = 1e-5
 # prams['T'] = 50000 * prams['dt']
-prams["T"] = 5000 * prams["dt"]
+prams["T"] = 10000 * prams["dt"]
 prams["kappa"] = 1.0
 prams["viscCont"] = torch.ones(prams["nv"])
 prams["gmresTol"] = 1e-10
 prams["areaLenTol"] = 1e-2
 prams["vortexSize"] = 2.5
 prams["chanWidth"] = 2.5
-prams["farFieldSpeed"] = 400
+prams["farFieldSpeed"] = 2000
 
 prams["repStrength"] = 1e5
 prams["minDist"] = 1.0 / 32
@@ -147,7 +151,7 @@ options = {
     "farField": "taylorGreen",
     "repulsion": False,
     "correctShape": True,
-    "reparameterization": True,
+    "reparameterization": False,
     "usePreco": True,
     "matFreeWalls": False,
     "confined": False,

@@ -14,7 +14,9 @@ class VesNetSolver:
     ):
         self.rank = comm_info.rank
         torch.set_default_dtype(torch.float32)
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        torch.set_default_device(comm_info.device)
+        device = comm_info.device
+        self.device = device
         cur_dtype = torch.float32
 
         # Build MLARM class to take time steps using networks
@@ -153,8 +155,9 @@ class VesNetSolver:
         start_time=0,
         rank=None,
     ):
+        torch.set_default_device(self.device)
         positions = initPositions.clone()
-        if self.rank < self.new_num_ranks:
+        if self.rank > self.new_num_ranks:
             return positions, sigmaStore
 
         sigmaStore = sigmaStore.to(dtype=torch.float32)
@@ -165,6 +168,7 @@ class VesNetSolver:
                 break
 
         num_steps = int(self.finalTime / self.params["dt"])
+        print("Vesnet Solver Sweep")
         print("Number of steps:", num_steps)
 
         for _ in range(num_steps):

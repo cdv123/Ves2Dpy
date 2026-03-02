@@ -1,6 +1,8 @@
 # %%
 import numpy as np
 import torch
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+torch.set_default_device(device)
 torch.set_default_dtype(torch.float32)
 import torch.backends.cudnn as cudnn
 cudnn.benchmark = True
@@ -24,7 +26,6 @@ torch.cuda.synchronize()
 torch.cuda.cudart().cudaProfilerStart()
 
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 cur_dtype = torch.float32
 
 logger = logging.getLogger(__name__)
@@ -78,13 +79,13 @@ def set_bg_flow(bgFlow, speed):
 # vinf = set_bg_flow(bgFlow, speed)
 
 bgFlow = 'shear'
-speed = 400
+speed = 2000
 vinf = set_bg_flow(bgFlow, speed)
 
 
 # Time stepping
 dt = 1e-5  # Time step size
-Th = 100 * dt # Time horizon
+Th = 3000 * dt # Time horizon
 
 # Vesicle discretization
 N = 128  # Number of points to discretize vesicle
@@ -98,7 +99,8 @@ rbf_upsample = -1
 # Xics = loadmat("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/ManyVesICsTaylorGreen/nv504IC.mat").get('X')
 selected_one = [0]
 #Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get('X')[:, selected_one]
-Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get('X')
+Xics = loadmat("../../npy-files/shearIC.mat").get('Xic')
+#Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get('X')
 #Xics = Xics - Xics.mean()
 # Xics = init_data.get('Xic')
 # Xics = np.load("TG_new_start.npy")

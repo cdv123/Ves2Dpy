@@ -7,11 +7,17 @@ from capsules import capsules
 import time
 from tstep_biem import TStepBiem
 import matplotlib.pyplot as plt
+from mpi4py import MPI
+from petsc4py import PETSc
 from scipy.io import loadmat
 from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
 from torch.profiler import profile, ProfilerActivity
+from helper_functions import CommInfo, init_distributed
 
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+size = comm.Get_size()
 
 def initVes2D(options=None, prams=None):
     """
