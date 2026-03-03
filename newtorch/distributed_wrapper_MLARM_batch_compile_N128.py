@@ -340,17 +340,8 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         tracJump = fBend + fTen  # total elastic force
 
-        Xstand, standardizationValues = self.standardizationStep(Xold)
-        Xstand_local = Xstand[:, self.start : self.end].to(
-            self.device, non_blocking=True
-        )
-        standardizationValues_local = (
-            standardizationValues[0][self.start : self.end].to(self.device),
-            standardizationValues[1][self.start : self.end].to(self.device),
-            standardizationValues[2][:, self.start : self.end].to(self.device),
-            standardizationValues[3][:, self.start : self.end].to(self.device),
-            standardizationValues[4][self.start : self.end, :].to(self.device),
-        )
+        Xold_local = Xold[:, self.start: self.end].to(self.device)
+        Xstand_local, standardizationValues_local = self.standardizationStep(Xold_local)
 
         # Explicit Tension at the Current Step
         # Calculate velocity induced by vesicles on each other due to elastic force
@@ -366,29 +357,35 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         xlayers_local   = xlayers_local.contiguous()
         ylayers_local   = ylayers_local.contiguous()
 
-        gather_velx_real = [torch.zeros_like(velx_real_local, device=self.device) for _ in range(self.size)]
-        gather_vely_real = [torch.zeros_like(vely_real_local, device=self.device) for _ in range(self.size)]
-        gather_velx_imag = [torch.zeros_like(velx_imag_local, device=self.device) for _ in range(self.size)]
-        gather_vely_imag = [torch.zeros_like(vely_imag_local, device=self.device) for _ in range(self.size)]
+        self.gather_velx_real = [torch.zeros_like(velx_real_local, device=self.device) for _ in range(self.size)] if self.gather_velx_real is not None
+        self.gather_vely_real = [torch.zeros_like(vely_real_local, device=self.device) for _ in range(self.size)] if self.gather_vely_real is not None
+        self.gather_velx_imag = [torch.zeros_like(velx_imag_local, device=self.device) for _ in range(self.size)] if self.gather_velx_imag is not None
+        self.gather_vely_imag = [torch.zeros_like(vely_imag_local, device=self.device) for _ in range(self.size)] if self.gather_vely_imag is not None
+        self.gather_standardizationValues = [torch.zeros_like(standardizationValues_local[0], device=self.device) for _ in range(self.size)]
 
-        dist.all_gather(gather_velx_real, velx_real_local)
-        dist.all_gather(gather_vely_real, vely_real_local)
-        dist.all_gather(gather_velx_imag, velx_imag_local)
-        dist.all_gather(gather_vely_imag, vely_imag_local)
+        dist.all_gather(self.gather_velx_real, velx_real_local)
+        dist.all_gather(self.gather_vely_real, vely_real_local)
+        dist.all_gather(self.gather_velx_imag, velx_imag_local)
+        dist.all_gather(self.gather_vely_imag, vely_imag_local)
 
-        velx_real = torch.cat(gather_velx_real, dim=0)
-        vely_real = torch.cat(gather_vely_real, dim=0)
-        velx_imag = torch.cat(gather_velx_imag, dim=0)
-        vely_imag = torch.cat(gather_vely_imag, dim=0)
+        velx_real = torch.cat(self.gather_velx_real, dim=0)
+        vely_real = torch.cat(self.gather_vely_real, dim=0)
+        velx_imag = torch.cat(self.gather_velx_imag, dim=0)
+        vely_imag = torch.cat(self.gather_vely_imag, dim=0)
 
-        gather_xlayers = [torch.zeros_like(xlayers_local, device=self.device) for _ in range(self.size)]
-        gather_ylayers = [torch.zeros_like(ylayers_local, device=self.device) for _ in range(self.size)]
+        self.gather_xlayers = [torch.zeros_like(xlayers_local, device=self.device) for _ in range(self.size)] if self.gather_xlayers is not None
+        self.gather_ylayers = [torch.zeros_like(ylayers_local, device=self.device) for _ in range(self.size)] if self.gather_ylayers is not None
 
-        dist.all_gather(gather_xlayers, xlayers_local)
-        dist.all_gather(gather_ylayers, ylayers_local)
+        dist.all_gather(self.gather_xlayers, xlayers_local)
+        dist.all_gather(self.gather_ylayers, ylayers_local)
 
-        xlayers = torch.cat(gather_xlayers, dim=2)
-        ylayers = torch.cat(gather_ylayers, dim=2)
+        standardizationValues = []
+        for i in range(len(standardizationValues_local)):
+            standardizationValues.append([dist.all_gather(self.gather_standardizationValues, standardizationValues_local[i])])
+            standardizationValues[-1] = torch.cat(self.gather_standardizationValues, dim=0)
+
+        xlayers = torch.cat(self.gather_xlayers, dim=2)
+        ylayers = torch.cat(self.gather_ylayers, dim=2)
 
         # NEED SYNCHRONIZATION
         info_rbf, info_stokes = None, None
@@ -506,27 +503,27 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         Xadv_local = filterShape(Xadv_local, 16)
         Xnew_local = self.relaxWTorchNet(Xadv_local)
         gather_list = [torch.zeros_like(Xnew_local, device=self.device) for _ in range(self.size)]
-        dist.all_gather(gather_list, Xnew_local)
-
-        Xnew = torch.cat(gather_list, dim=1)
 
         modes = torch.concatenate(
             (torch.arange(0, N // 2), torch.arange(-N // 2, 0))
         ).to(Xold.device)  # .double()
 
-        XnewC = Xnew.clone()
+        XnewC_local = Xnew_local.clone()
         # start.record()
         for _ in range(5):
-            Xnew, flag = self.oc.redistributeArcLength(Xnew, modes)
+            Xnew_local, flag = self.oc.redistributeArcLength(Xnew_local, modes)
             if flag:
                 break
-        Xnew = self.oc.alignCenterAngle(XnewC, Xnew.to(Xold.device))
+        Xnew_local = self.oc.alignCenterAngle(XnewC_local, Xnew_local.to(Xold.device))
 
         # start.record()
         with torch.enable_grad():
-            Xnew = self.oc.correctAreaAndLengthAugLag(Xnew, self.area0, self.len0)
+            Xnew_local = self.oc.correctAreaAndLengthAugLag(Xnew_local, self.area0_local, self.len0_local)
 
-        Xnew = filterShape(Xnew.to(Xold.device), 16)
+        Xnew_local = filterShape(Xnew_local.to(Xold.device), 16)
+
+        dist.all_gather(gather_list, Xnew_local)
+        Xnew = torch.cat(gather_list, dim=1)
 
         #print(f"monitoring tenNew magnitude: {torch.max(torch.abs(tenNew))}")
         #print(
