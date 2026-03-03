@@ -50,6 +50,7 @@ class PararealSolver:
             device=comm_info.device,
             dtype=self.initVesicles.dtype,
         )
+        print(latestVesicles.shape)
 
         for _ in range(pararealIter):
             parallelCorrections, self.parallelCorrectionsSigma = self.parallelSweep(
@@ -74,7 +75,9 @@ class PararealSolver:
 
         if file_name is not None:
             print("Writing solution")
-            self.parallelSweep(latestVesicles, parallelCorrections, file_name)
+            latestVesicles, self.parallelCorrectionsSigma = self.parallelSweep(
+                latestVesicles, parallelCorrections, file_name
+            )
 
         return latestVesicles
 

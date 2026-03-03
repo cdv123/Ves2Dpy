@@ -94,7 +94,7 @@ if __name__ == "__main__":
         torch.set_default_device("cuda")
 
     fileName = "./output_BIEM/parareal_output.bin"  # To save simulation data
-    # fileName = None 
+    # fileName = None
 
     # Assume oc is your geometry utility class (like curve_py in MATLAB)
     oc = Curve()  # You need to define this with required methods
@@ -122,15 +122,18 @@ if __name__ == "__main__":
     # ------------------------------
 
     # Initial shape
-    #selected_one = [0]
-    #Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
+    # selected_one = [0]
+    # Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
     Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
-    #Xics = Xics - Xics.mean()
+    # Xics = Xics - Xics.mean()
 
     sigma = None
     X = torch.from_numpy(Xics).float().to(device)
     X = interpft_vec(X, 128).to(device)
     nv = X.shape[1]
+
+    totalTime = 1000 * prams["dt"]
+    pararealTime = 100 * prams["dt"]
 
     # ------------------------------
     # Simulation parameters and options
@@ -138,7 +141,7 @@ if __name__ == "__main__":
     prams["N"] = X.shape[0] // 2
     prams["nv"] = X.shape[1]
     prams["dt"] = 1e-6
-    prams["T"] = 1000 * prams["dt"]
+    prams["T"] = pararealTime
     prams["kappa"] = 1.0
     prams["viscCont"] = torch.ones(prams["nv"])
     prams["gmresTol"] = 1e-10
@@ -216,14 +219,23 @@ if __name__ == "__main__":
     pararealSolver = PararealSolver(
         parallelSolver=parallelSolver, coarseSolver=coarseSolver
     )
-    X = pararealSolver.pararealSolve(
-        initVesicles=X,
-        sigma=sigma,
-        numCores=numCores,
-        endTime=prams["T"],
-        pararealIter=1,
-        file_name=None,
-        comm_info=comm_info,
-    )
+
+    num_iter = totalTime // pararealTime
+    last_iter_time = totalTime % pararealTime
+
+    if last_iter_time != 0:
+        # FIX LATER
+        print("Total time should be divisible by Parareal time")
+
+    for i in range(num_iter):
+        X = pararealSolver.pararealSolve(
+            initVesicles=X,
+            sigma=sigma,
+            numCores=numCores,
+            endTime=prams["T"],
+            pararealIter=1,
+            file_name=None,
+            comm_info=comm_info,
+        )
 
     output = np.concatenate(([time_], X.cpu().numpy().T.flatten())).astype("float64")
