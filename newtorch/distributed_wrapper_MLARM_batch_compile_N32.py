@@ -11,7 +11,7 @@ from tools.filter import (
     upsample_fft,
     downsample_fft,
 )
-from model_zoo.get_network_torch import (
+from model_zoo_N32.get_network_torch_N32 import (
     RelaxNetwork,
     TenSelfNetwork,
     MergedAdvNetwork,
