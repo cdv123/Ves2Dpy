@@ -17,7 +17,7 @@ torch._dynamo.reset()
 # from curve_batch import Curve
 from curve_batch_compile import Curve
 
-from distributed_wrapper_MLARM_batch_compile_N128 import MLARM_manyfree_py
+from distributed_wrapper_MLARM_batch_compile_N32 import MLARM_manyfree_py
 from scipy.io import loadmat
 from tqdm import tqdm
 from tools.filter import interpft_vec
@@ -106,7 +106,7 @@ dt = 1e-5  # Time step size
 Th = 100 * dt  # Time horizon
 
 # Vesicle discretization
-N = 128  # Number of points to discretize vesicle
+N = 32  # Number of points to discretize vesicle
 nlayers = 3
 rbf_upsample = -1
 
@@ -139,7 +139,7 @@ X = X0.clone().to(device)
 
 # %%
 print(f"We have {nv} vesicles")
-Ten = torch.from_numpy(np.zeros((128, nv))).to(device).float()
+Ten = torch.from_numpy(np.zeros((32, nv))).to(device).float()
 
 # Build MLARM class to take time steps using networks
 # Load the normalization (mean, std) values for the networks
