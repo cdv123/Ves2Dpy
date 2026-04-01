@@ -8,6 +8,7 @@ from capsules import capsules
 from poten import Poten
 from tools.filter import interpft_vec, interpft
 from biem_support import wrapper_allExactStokesSLTarget_compare2, naiveNearZoneInfo
+import torch.utils.dlpack
 import cupy as cp
 
 if torch.cuda.is_available():
@@ -400,11 +401,14 @@ class TStepBiem:
         global matvecs
         matvecs = 0
 
+        print("Xstore device:", Xstore.device)
+        print("rhs device:", rhs.device)
+        print("Galpert device:", self.Galpert.device if isinstance(self.Galpert, torch.Tensor) else type(self.Galpert))
+
         gmres_func = lambda X: self.time_matvec(X, vesicle)
         cupy_lin_op = LinearOperator(
             (initGMRES.shape[0], initGMRES.shape[0]), gmres_func
         )
-        torch.cuda.empty_cache()
 
         counter = gmres_counter(disp=True)
 
@@ -473,7 +477,7 @@ class TStepBiem:
         if isinstance(Xn, np.ndarray):
             Xn = torch.from_numpy(Xn).double()  # Convert to tensor
         elif isinstance(Xn, cp.ndarray):
-            Xn = torch.as_tensor(Xn).double()
+            Xn = torch.utils.dlpack.from_dlpack(Xn.toDlpack()).double()
 
         walls = self.Xwalls
         op = self.op
@@ -658,7 +662,7 @@ class TStepBiem:
         if self.confined:
             val = torch.cat([val, valWalls.view(-1), valLets])
 
-        return cp.asarray(val) if torch.cuda.is_available() else np.asarray(val)
+        return cp.fromDlpack(torch.utils.dlpack.to_dlpack(val)) if torch.cuda.is_available() else np.asarray(val)
 
     def RSlets(X, center, stokeslet, rotlet):
         """
@@ -717,7 +721,8 @@ class TStepBiem:
         if isinstance(z, np.ndarray):
             z = torch.from_numpy(z).double()  # Convert to tensor
         elif isinstance(z, cp.ndarray):
-            z = torch.as_tensor(z).double()
+            # z = torch.as_tensor(z).double()
+            z = torch.utils.dlpack.from_dlpack(z.toDlpack()).double()
 
         nv = o.bdiagVes["LU"].shape[0]  # number of vesicles
         N = o.bdiagVes["LU"].shape[1] // 3  # points per vesicle
@@ -738,7 +743,7 @@ class TStepBiem:
 
         # Combine and return
         val = torch.cat([valVes, valWalls], dim=0) if o.confined else valVes
-        return cp.asarray(val) if torch.cuda.is_available() else np.asarray(val)
+        return cp.fromDlpack(torch.utils.dlpack.to_dlpack(val)) if torch.cuda.is_available() else np.asarray(val)
 
     def wallsPrecond(o):
         """

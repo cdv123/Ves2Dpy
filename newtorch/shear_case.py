@@ -133,7 +133,7 @@ X = interpft_vec(X, 32).to(device)
 # ------------------------------
 prams["N"] = X.shape[0] // 2
 prams["nv"] = X.shape[1]
-prams["dt"] = 1e-5
+prams["dt"] = 1e-6
 # prams['T'] = 50000 * prams['dt']
 prams["T"] = 10000 * prams["dt"]
 prams["kappa"] = 1.0

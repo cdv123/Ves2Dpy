@@ -1,23 +1,14 @@
 # %%
-import math
 import numpy as np
 import torch
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-torch.set_default_device(device)
 torch.set_default_dtype(torch.float32)
 import torch.backends.cudnn as cudnn
-cudnn.benchmark = False
-cudnn.deterministic = True
+cudnn.benchmark = True
 import torch._dynamo
-from torch.profiler import profile, ProfilerActivity
+from torch.profiler import profile, ProfilerActivity, schedule, tensorboard_trace_handler
 torch._dynamo.reset()
 # from curve_batch import Curve
 from curve_batch_compile import Curve
-print(torch.cuda.get_device_name(torch.cuda.current_device()))
-print(torch.version.hip)
-print(torch.cuda.is_available())
-print(torch.cuda.get_device_name(0))
-print(torch.cuda.get_device_properties(0))
 
 from wrapper_MLARM_batch_compile_N128 import MLARM_manyfree_py
 from math import sqrt
@@ -33,6 +24,7 @@ torch.cuda.synchronize()
 torch.cuda.cudart().cudaProfilerStart()
 
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 cur_dtype = torch.float32
 
 logger = logging.getLogger(__name__)
@@ -57,22 +49,12 @@ fileName = './output_N128/does_near_help_without.bin'  # To save simulation data
 def set_bg_flow(bgFlow, speed):
     def get_flow(X):
         N = X.shape[0] // 2  # Assuming the input X is split into two halves
-        x, y = X[:N, :], X[N:, :]
         if bgFlow == 'relax':
             return torch.zeros_like(X)  # Relaxation
         elif bgFlow == 'shear':
-            v_x = y
-            v_y = torch.zeros_like(y)
-            vInf = torch.cat((v_x, v_y), dim=0)
-            return speed*vInf
-
+            return speed * torch.vstack((X[N:], torch.zeros_like(X[:N])))  # Shear
         elif bgFlow == 'taylorGreen':
-            vortexSize = 2.5 
-            scale = math.pi / vortexSize
-            v_x = torch.sin(x * scale) * torch.cos(y * scale)
-            v_y = -torch.cos(x * scale) * torch.sin(y * scale)
-            vInf = vortexSize * torch.cat((v_x, v_y), dim=0)
-            return speed * vInf 
+            return speed * torch.vstack((torch.sin(X[:N]) * torch.cos(X[N:]), -torch.cos(X[:N]) * torch.sin(X[N:])))  # Taylor-Green
         elif bgFlow == 'parabolic':
             return torch.vstack((speed * (1 - (X[N:] / 0.375) ** 2), torch.zeros_like(X[:N])))  # Parabolic
         elif bgFlow == 'rotation':
@@ -96,13 +78,13 @@ def set_bg_flow(bgFlow, speed):
 # vinf = set_bg_flow(bgFlow, speed)
 
 bgFlow = 'shear'
-speed = 2000
+speed = 400
 vinf = set_bg_flow(bgFlow, speed)
 
 
 # Time stepping
-dt = 4e-6  # Time step size
-Th = 2500 * dt # Time horizon
+dt = 1e-5  # Time step size
+Th = 100 * dt # Time horizon
 
 # Vesicle discretization
 N = 128  # Number of points to discretize vesicle
@@ -116,7 +98,6 @@ rbf_upsample = -1
 # Xics = loadmat("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/ManyVesICsTaylorGreen/nv504IC.mat").get('X')
 selected_one = [0]
 #Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get('X')[:, selected_one]
-#Xics = loadmat("../../npy-files/shearIC.mat").get('Xic')
 Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get('X')
 #Xics = Xics - Xics.mean()
 # Xics = init_data.get('Xic')
@@ -185,12 +166,11 @@ mlarm.nearNetwork.model.eval()
 mlarm.relaxNetwork.model.eval()
 mlarm.tenSelfNetwork.model.eval()
 mlarm.tenAdvNetwork.model.eval()
-mlarm.mergedAdvNetwork.model.eval()
-#mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="reduce-overhead")
+mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="reduce-overhead")
 # mlarm.advNetwork.model  = torch.compile(mlarm.advNetwork.model,  mode="max-autotune")
-#mlarm.relaxNetwork.model = torch.compile(mlarm.relaxNetwork.model, mode="reduce-overhead")
-#mlarm.tenSelfNetwork.model = torch.compile(mlarm.tenSelfNetwork.model, mode="reduce-overhead")
-#mlarm.tenAdvNetwork.model = torch.compile(mlarm.tenAdvNetwork.model, mode="reduce-overhead")
+mlarm.relaxNetwork.model = torch.compile(mlarm.relaxNetwork.model, mode="reduce-overhead")
+mlarm.tenSelfNetwork.model = torch.compile(mlarm.tenSelfNetwork.model, mode="reduce-overhead")
+mlarm.tenAdvNetwork.model = torch.compile(mlarm.tenAdvNetwork.model, mode="reduce-overhead")
 #print(type(mlarm.nearNetwork))
 
 area0, len0 = oc.geomProp(X)[1:]
@@ -225,6 +205,15 @@ currtime = 0
 # it = 0
 print("Tension dtype", Ten.dtype)
 
+prof = profile(
+    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+    schedule=schedule(wait=2, warmup=2, active=6, repeat=1),
+    record_shapes=False,
+    profile_memory=True,
+    with_stack=True,
+    on_trace_ready=tensorboard_trace_handler("./profiler_output"),
+)
+
 print(f"using 3 layers, {mlarm.rbf_upsample} upsampling, saved as {fileName}")
 # while currtime < Th:
 
@@ -235,40 +224,53 @@ print(f"using 3 layers, {mlarm.rbf_upsample} upsampling, saved as {fileName}")
 #)
 
 #with torch.inference_mode():
-for it in tqdm(range(int(Th//dt))): 
-#for it in range(20): 
-    # Take a time step
-    #tStart = time.time()
-    
-    #X, Ten = mlarm.time_step_many(X, Ten)
-    with torch.no_grad():
-        X, Ten = mlarm.time_step_many_noinfo(X, Ten, nlayers)
-    print(X)
-        #X, Ten = mlarm.time_step_many_noinfo_exactVelLayer(X, Ten, nlayers)
-    ## np.save(f"shape_t{currtime}.npy", X)
-    #tEnd = time.time()
+with prof:
+    for it in tqdm(range(int(Th//dt))): 
+    #for it in range(20): 
+        # Take a time step
+        #tStart = time.time()
+        
+        #X, Ten = mlarm.time_step_many(X, Ten)
+        with torch.no_grad():
+            X, Ten = mlarm.time_step_many_noinfo(X, Ten, nlayers)
+            #X, Ten = mlarm.time_step_many_noinfo_exactVelLayer(X, Ten, nlayers)
+        ## np.save(f"shape_t{currtime}.npy", X)
+        #tEnd = time.time()
 
-    ## Find error in area and length
-    #area, length = oc.geomProp(X)[1:]
-    #errArea = torch.max(torch.abs(area - mlarm.area0) / mlarm.area0)
-    #errLen = torch.max(torch.abs(length - mlarm.len0) / mlarm.len0)
-        #if options["reparameterization"]:
-    # Redistribute arc-length
-    ## Update counter and time
-    ## it += 1
-    currtime += dt
+        ## Find error in area and length
+        #area, length = oc.geomProp(X)[1:]
+        #errArea = torch.max(torch.abs(area - mlarm.area0) / mlarm.area0)
+        #errLen = torch.max(torch.abs(length - mlarm.len0) / mlarm.len0)
+            #if options["reparameterization"]:
+        # Redistribute arc-length
+        ## Update counter and time
+        ## it += 1
+        currtime += dt
 
-    ## Print time step info
-    #print('********************************************')
-    #print(f'{it+1}th time step for N=128, time: {currtime}')
-    #print(f'Solving with networks takes {tEnd - tStart} sec.')
-    #print(f'Error in area and length: {max(errArea, errLen)}')
-    #print('********************************************\n')
+        ## Print time step info
+        #print('********************************************')
+        #print(f'{it+1}th time step for N=128, time: {currtime}')
+        #print(f'Solving with networks takes {tEnd - tStart} sec.')
+        #print(f'Error in area and length: {max(errArea, errLen)}')
+        #print('********************************************\n')
 
-    ## Save data
-    output = np.concatenate(([currtime], X.cpu().numpy().T.flatten())).astype('float64')
-    with open(fileName, 'ab') as fid:
-        output.tofile(fid)
+        ## Save data
+        output = np.concatenate(([currtime], X.cpu().numpy().T.flatten())).astype('float64')
+        with open(fileName, 'ab') as fid:
+            output.tofile(fid)
+
+        prof.step()
+
+print(prof.key_averages().table(
+    sort_by="cuda_time_total",
+    row_limit=50
+))
+
+print(prof.key_averages().table(
+    sort_by="self_cpu_time_total",
+    row_limit=40
+))
+
 
 torch.cuda.synchronize()
 torch.cuda.cudart().cudaProfilerStop()

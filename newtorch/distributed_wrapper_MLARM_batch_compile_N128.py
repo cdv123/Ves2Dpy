@@ -363,6 +363,10 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         vely_imag_local = vely_imag_local.contiguous()
         xlayers_local = xlayers_local.contiguous()
         ylayers_local = ylayers_local.contiguous()
+        standardizationValues_local = list(standardizationValues_local)
+
+        for i in range(len(standardizationValues_local)):
+            standardizationValues_local[i] = standardizationValues_local[i].contiguous()
 
         if self.first_iter:
             self.gather_velx_real = [
@@ -385,7 +389,11 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
                 torch.zeros_like(standardizationValues_local[0], device=self.device)
                 for _ in range(self.size)
             ]
-            self.first_iter = False
+            # Last row has int data type, need another buffer
+            self.gather_last_standardValues = [
+                torch.zeros_like(standardizationValues_local[-1], device=self.device)
+                for _ in range(self.size)
+            ]
 
         dist.all_gather(self.gather_velx_real, velx_real_local)
         dist.all_gather(self.gather_vely_real, vely_real_local)
@@ -412,6 +420,17 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         standardizationValues = []
         for i in range(len(standardizationValues_local)):
+            if i == len(standardizationValues_local) - 1:
+                dist.all_gather(
+                    self.gather_last_standardValues,
+                    standardizationValues_local[i],
+                )
+
+                standardizationValues.append(
+                    torch.cat(self.gather_last_standardValues, dim=0)
+                )
+                continue
+
             dist.all_gather(
                 self.gather_standardizationValues,
                 standardizationValues_local[i],
@@ -445,7 +464,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             -torch.sum((all_X[:, None] - all_X[None, ...]) ** 2, dim=-2)
         )
         matrices += (
-            torch.eye(all_X.shape[0], device=self.device).unsqueeze(-1) * 1e-6
+            torch.eye(all_X.shape[0], device=self.device).unsqueeze(-1) * 1e-4
         ).expand(-1, -1, nv)  # (nlayers*N, nlayers*N, nv)
 
         L = torch.linalg.cholesky(matrices.permute(2, 0, 1))
@@ -481,15 +500,15 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             Xstand_local, standardizationValues_local, vinf_local
         )
 
-        gather_list = [torch.zeros_like(vBack_local) for _ in range(self.size)]
-        dist.all_gather(gather_list, vBack_local)
-        vBackSolve = torch.cat(gather_list, dim=1)
-
-        selfBendSolve = self.invTenMatOnSelfBend(
+        selfBendSolve_local = self.invTenMatOnSelfBend(
             Xstand_local, standardizationValues_local
         )
 
-        tenNew = -(vBackSolve + selfBendSolve)
+        tenNew_local = -(vBack_local + selfBendSolve_local)
+        gather_list = [torch.zeros_like(tenNew_local) for _ in range(self.size)]
+
+        dist.all_gather(gather_list, tenNew_local)
+        tenNew = torch.cat(gather_list, dim=1)
 
         fTen_new = vesicle.tensionTerm(tenNew)
         tracJump = fBend + fTen_new
@@ -573,6 +592,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         #    f"monitoring farfieldtracjump magnitude: {torch.max(torch.abs(farFieldtracJump))}"
         # )
         # np.save("debug_last_tenNew.npy", tenNew.cpu().numpy())
+        self.first_iter = False
         return Xnew, tenNew
 
     # @torch.compile(backend='cudagraphs')

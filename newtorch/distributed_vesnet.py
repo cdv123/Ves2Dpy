@@ -8,7 +8,8 @@ import numpy as np
 torch.set_default_dtype(torch.float32)
 import torch.backends.cudnn as cudnn
 
-cudnn.benchmark = True
+cudnn.benchmark = False
+cudnn.deterministic = True
 import torch._dynamo
 from torch.profiler import profile, ProfilerActivity
 
@@ -106,7 +107,7 @@ vinf = set_bg_flow(bgFlow, speed)
 
 # Time stepping
 dt = 1e-5  # Time step size
-Th = 1000 * dt  # Time horizon
+Th = 100 * dt  # Time horizon
 
 # Vesicle discretization
 N = 128  # Number of points to discretize vesicle
@@ -226,7 +227,8 @@ mlarm.nearNetwork.model.eval()
 mlarm.relaxNetwork.model.eval()
 mlarm.tenSelfNetwork.model.eval()
 mlarm.tenAdvNetwork.model.eval()
-mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="reduce-overhead")
+mlarm.mergedAdvNetwork.model.eval()
+#mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="reduce-overhead")
 # mlarm.advNetwork.model  = torch.compile(mlarm.advNetwork.model,  mode="max-autotune")
 
 print("default dtype:", torch.get_default_dtype())
@@ -235,21 +237,24 @@ print("relax param dtype:", next(mlarm.relaxNetwork.model.parameters()).dtype)
 print("tenSelf param dtype:", next(mlarm.tenSelfNetwork.model.parameters()).dtype)
 print("tenAdv param dtype:", next(mlarm.tenAdvNetwork.model.parameters()).dtype)
 
-mlarm.relaxNetwork.model = torch.compile(
-    mlarm.relaxNetwork.model, mode="reduce-overhead"
-)
-mlarm.tenSelfNetwork.model = torch.compile(
-    mlarm.tenSelfNetwork.model, mode="reduce-overhead"
-)
-mlarm.tenAdvNetwork.model = torch.compile(
-    mlarm.tenAdvNetwork.model, mode="reduce-overhead"
-)
+#mlarm.relaxNetwork.model = torch.compile(
+#    mlarm.relaxNetwork.model, mode="reduce-overhead"
+#)
+#mlarm.tenSelfNetwork.model = torch.compile(
+#    mlarm.tenSelfNetwork.model, mode="reduce-overhead"
+#)
+#mlarm.tenAdvNetwork.model = torch.compile(
+#    mlarm.tenAdvNetwork.model, mode="reduce-overhead"
+#)
 # print(type(mlarm.nearNetwork))
 
 area0, len0 = oc.geomProp(X)[1:]
 mlarm.area0 = area0
 # mlarm.area0 = torch.ones((nv), device=X.device, dtype=torch.float32) * 0.0524
 mlarm.len0 = len0
+
+mlarm.area0_local = area0[mlarm.start : mlarm.end]
+mlarm.len0_local = len0[mlarm.start : mlarm.end]
 # mlarm.len0 = torch.ones((nv), device=X.device, dtype=torch.float32)
 mlarm.op = Poten(N)
 
@@ -322,9 +327,10 @@ for it in tqdm(range(int(Th // dt))):
     # print('********************************************\n')
 
     ## Save data
-    output = np.concatenate(([currtime], X.cpu().numpy().T.flatten())).astype("float64")
-    with open(fileName, "ab") as fid:
-        output.tofile(fid)
+    if comm_info.rank == 0:
+        output = np.concatenate(([currtime], X.cpu().numpy().T.flatten())).astype("float64")
+        with open(fileName, "ab") as fid:
+            output.tofile(fid)
 
 torch.cuda.synchronize()
 torch.cuda.cudart().cudaProfilerStop()

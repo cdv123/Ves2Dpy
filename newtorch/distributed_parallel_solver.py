@@ -40,6 +40,7 @@ class BIEMSolver:
         out_file_name=None,
         start_time=0,
     ):
+        torch.set_default_dtype(torch.float64)
         positions = initPositions.clone()
         newSigma = sigmaStore.clone()
 

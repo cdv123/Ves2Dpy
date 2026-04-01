@@ -119,8 +119,8 @@ if __name__ == "__main__":
     
     # Initial shape
     # selected_one = [0]
-    #Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
-    Xics = loadmat("../../npy-files/shearIC.mat").get("Xic")
+    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
+    #Xics = loadmat("../../npy-files/shearIC.mat").get("Xic")
     
     sigma = None
     X = torch.from_numpy(Xics).float().to(device)
@@ -146,7 +146,7 @@ if __name__ == "__main__":
     prams["minDist"] = 1.0 / 32
     
     options = {
-        "farField": "shear",
+        "farField": "taylorGreen",
         "repulsion": False,
         "correctShape": True,
         "reparameterization": True,
@@ -197,16 +197,16 @@ if __name__ == "__main__":
         (torch.arange(0, prams["N"] // 2), torch.arange(-prams["N"] // 2, 0))
     ).to(X.device)  # .double()
     
-    numCores = 5
+    numCores = 2
     prams["T"] /= numCores
     coarse_prams = prams.copy()
     
     # Use a larger time step size for coarse solver
-    coarse_prams["dt"]*=2
+    coarse_prams["dt"]*=1
     
     #coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X)
-    #coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X)
-    coarseSolver = BIEMSolver(options, coarse_prams, Xwalls, X)
+    coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X)
+    #coarseSolver = BIEMSolver(options, coarse_prams, Xwalls, X)
     parallelSolver = ParallelSolver(options, prams, Xwalls, X, sigma, numCores)
     
     pararealSolver = PararealSolver(

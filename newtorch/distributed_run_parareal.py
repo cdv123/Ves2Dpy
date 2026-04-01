@@ -132,15 +132,15 @@ if __name__ == "__main__":
     X = interpft_vec(X, 128).to(device)
     nv = X.shape[1]
 
-    totalTime = 1000 * prams["dt"]
-    pararealTime = 100 * prams["dt"]
 
     # ------------------------------
     # Simulation parameters and options
     # ------------------------------
     prams["N"] = X.shape[0] // 2
     prams["nv"] = X.shape[1]
-    prams["dt"] = 1e-6
+    prams["dt"] = 1e-5
+    totalTime = 1000 * prams["dt"]
+    pararealTime = 500 * prams["dt"]
     prams["T"] = pararealTime
     prams["kappa"] = 1.0
     prams["viscCont"] = torch.ones(prams["nv"])
@@ -154,7 +154,7 @@ if __name__ == "__main__":
     prams["minDist"] = 1.0 / 32
 
     options = {
-        "farField": "shear",
+        "farField": "taylorGreen",
         "repulsion": False,
         "correctShape": True,
         "reparameterization": True,
@@ -203,14 +203,15 @@ if __name__ == "__main__":
         (torch.arange(0, prams["N"] // 2), torch.arange(-prams["N"] // 2, 0))
     ).to(X.device)  # .double()
 
-    numCores = 4
+    numCores = 2
+    numCoresVesnet = 2
     prams["T"] /= numCores
     coarse_prams = prams.copy()
 
     # Use a larger time step size for coarse solver
-    coarse_prams["dt"] *= 10
+    coarse_prams["dt"] *= 1
 
-    coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X, comm_info, nv, 4)
+    coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X, comm_info, nv, numCoresVesnet)
 
     parallelSolver = ParallelSolver(
         options, prams, Xwalls, numCores, comm_info.rank, comm_info.device
@@ -220,9 +221,10 @@ if __name__ == "__main__":
         parallelSolver=parallelSolver, coarseSolver=coarseSolver
     )
 
-    num_iter = totalTime // pararealTime
+    num_iter = int(totalTime // pararealTime)
     last_iter_time = totalTime % pararealTime
 
+    print(last_iter_time)
     if last_iter_time != 0:
         # FIX LATER
         print("Total time should be divisible by Parareal time")
@@ -234,7 +236,7 @@ if __name__ == "__main__":
             numCores=numCores,
             endTime=prams["T"],
             pararealIter=1,
-            file_name=None,
+            file_name=fileName,
             comm_info=comm_info,
         )
 

@@ -35,6 +35,7 @@ class PararealSolver:
             dtype=initVesicles.dtype,
         )
         latestVesicles = coarseSolutions.clone()
+        print("Latest vesicles shape", latestVesicles.shape)
 
         if comm_info.rank == 0:
             print("Latest Vesicles shape ", latestVesicles.shape)
@@ -50,7 +51,6 @@ class PararealSolver:
             device=comm_info.device,
             dtype=self.initVesicles.dtype,
         )
-        print(latestVesicles.shape)
 
         for _ in range(pararealIter):
             parallelCorrections, self.parallelCorrectionsSigma = self.parallelSweep(
@@ -79,7 +79,7 @@ class PararealSolver:
                 latestVesicles, parallelCorrections, file_name
             )
 
-        return latestVesicles
+        return latestVesicles[-1]
 
     def initSerialSweep(
         self, initCondition: torch.Tensor, initSigma: torch.Tensor

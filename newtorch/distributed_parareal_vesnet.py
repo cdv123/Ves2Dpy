@@ -111,6 +111,7 @@ class VesNetSolver:
         self.mlarm.relaxNetwork.model.eval()
         self.mlarm.tenSelfNetwork.model.eval()
         self.mlarm.tenAdvNetwork.model.eval()
+        self.mlarm.mergedAdvNetwork.model.eval()
         self.mlarm.nearNetwork.model = torch.compile(
             self.mlarm.nearNetwork.model, mode="reduce-overhead"
         )
@@ -130,6 +131,8 @@ class VesNetSolver:
         self.mlarm.area0 = self.area0
         # mlarm.area0 = torch.ones((nv), device=X.device, dtype=torch.float32) * 0.0524
         self.mlarm.len0 = self.len0
+        self.mlarm.area0_local = self.area0[self.mlarm.start : self.mlarm.end]
+        self.mlarm.len0_local = self.len0[self.mlarm.start : self.mlarm.end] 
         # mlarm.len0 = torch.ones((nv), device=X.device, dtype=torch.float32)
         self.mlarm.op = Poten(params["N"])
 
@@ -156,7 +159,10 @@ class VesNetSolver:
         rank=None,
     ):
         torch.set_default_device(self.device)
+        torch.set_default_dtype(torch.float32)
         positions = initPositions.clone()
+        dist.broadcast(positions, src=0)
+        dist.broadcast(sigmaStore, src=0)
         if self.rank > self.new_num_ranks:
             return positions, sigmaStore
 
@@ -171,7 +177,8 @@ class VesNetSolver:
         print("Vesnet Solver Sweep")
         print("Number of steps:", num_steps)
 
-        for _ in range(num_steps):
+        for i in range(num_steps):
+            print("Time step", i)
             start_time += self.params["dt"]
 
             with torch.no_grad():

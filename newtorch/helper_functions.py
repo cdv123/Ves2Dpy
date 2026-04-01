@@ -1,4 +1,5 @@
 import torch
+import math
 import os
 from torch import distributed as dist
 from dataclasses import dataclass
@@ -7,17 +8,18 @@ from dataclasses import dataclass
 def set_bg_flow(bgFlow, speed):
     def get_flow(X):
         N = X.shape[0] // 2  # Assuming the input X is split into two halves
+        x, y = X[:N, :], X[N:, :]
         if bgFlow == "relax":
             return torch.zeros_like(X)  # Relaxation
         elif bgFlow == "shear":
             return speed * torch.vstack((X[N:], torch.zeros_like(X[:N])))  # Shear
         elif bgFlow == "taylorGreen":
-            return speed * torch.vstack(
-                (
-                    torch.sin(X[:N]) * torch.cos(X[N:]),
-                    -torch.cos(X[:N]) * torch.sin(X[N:]),
-                )
-            )  # Taylor-Green
+            vortexSize = 2.5
+            scale = math.pi / vortexSize
+            v_x = torch.sin(x * scale) * torch.cos(y * scale)
+            v_y = -torch.cos(x * scale) * torch.sin(y * scale)
+            vInf = vortexSize * torch.cat((v_x, v_y), dim=0)
+            return speed * vInf
         elif bgFlow == "parabolic":
             return torch.vstack(
                 (speed * (1 - (X[N:] / 0.375) ** 2), torch.zeros_like(X[:N]))
@@ -53,8 +55,9 @@ class CommInfo:
     device: torch.device
 
 
-def init_distributed(comm_info):
-    dist.init_process_group(backend="nccl", world_size=comm_info.numProcs, rank=comm_info.device)
+def init_distributed():
+    dist.init_process_group(backend="nccl")
+    world_size = dist.get_world_size()
 
     local_rank = int(os.environ["LOCAL_RANK"])
 
@@ -66,5 +69,5 @@ def init_distributed(comm_info):
         device = torch.device(f"cuda:{local_rank}")
 
 
-    print(f"Rank {rank}/{world_size} on GPU {local_rank}")
-    return CommInfo(rank, world_size, device)
+    print(f"Rank {local_rank}/{world_size} on GPU {local_rank}")
+    return CommInfo(local_rank, world_size, device)
