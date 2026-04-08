@@ -1,8 +1,10 @@
 import torch
+
 torch.set_default_dtype(torch.float32)
 # from scipy.interpolate import interp1d
 from curve_batch_compile import Curve
 from fft1 import fft1
+
 
 class capsules:
     """
@@ -11,7 +13,7 @@ class capsules:
     target points (such as tracers or pressure/stress targets)
     % Given a vesicle, the main tasks that can be performed are
     % computing the required derivatives (bending, tension, surface
-    % divergence), the traction jump, the pressure and stress, 
+    % divergence), the traction jump, the pressure and stress,
     % and constructing structures required for near-singluar
     % integration
     """
@@ -20,7 +22,7 @@ class capsules:
         """
         Initialize the capsules class with parameters.
         % capsules(X,sigma,u,kappa,viscCont) sets parameters and options for
-        % the class; no computation takes place here.  
+        % the class; no computation takes place here.
         %
         % sigma and u are not needed and typically unknown, so just set them to
         % an empty array.
@@ -32,7 +34,7 @@ class capsules:
         oc = Curve()
         # Jacobian, tangent, and curvature
         self.sa, self.xt, self.cur = oc.diffProp(self.X)
-        self.isa = 1. / self.sa
+        self.isa = 1.0 / self.sa
         self.sig = sigma  # Tension of vesicle
         self.u = u  # Velocity of vesicle
         self.kappa = kappa  # Bending modulus
@@ -64,8 +66,12 @@ class capsules:
         Compute the term due to bending.
         """
         c = Curve()
-        return torch.vstack([-self.kappa * c.arcDeriv(f[:self.N, :], 4, self.isa, self.IK),
-                          -self.kappa * c.arcDeriv(f[self.N:, :], 4, self.isa, self.IK)])
+        return torch.vstack(
+            [
+                -self.kappa * c.arcDeriv(f[: self.N, :], 4, self.isa, self.IK),
+                -self.kappa * c.arcDeriv(f[self.N :, :], 4, self.isa, self.IK),
+            ]
+        )
 
     def tensionTerm(self, sig):
         """
@@ -76,8 +82,12 @@ class capsules:
         # print(sig.device)
         # print(self.IK.device)
         # print(self.xt.device)
-        return torch.vstack([c.arcDeriv(sig * self.xt[:self.N, :], 1, self.isa, self.IK),
-                          c.arcDeriv(sig * self.xt[self.N:, :], 1, self.isa, self.IK)])
+        return torch.vstack(
+            [
+                c.arcDeriv(sig * self.xt[: self.N, :], 1, self.isa, self.IK),
+                c.arcDeriv(sig * self.xt[self.N :, :], 1, self.isa, self.IK),
+            ]
+        )
 
     def surfaceDiv(self, f):
         """
@@ -86,7 +96,10 @@ class capsules:
         oc = Curve()
         fx, fy = oc.getXY(f)
         tangx, tangy = oc.getXY(self.xt)
-        return oc.arcDeriv(fx, 1, self.isa, self.IK) * tangx + oc.arcDeriv(fy, 1, self.isa, self.IK) * tangy
+        return (
+            oc.arcDeriv(fx, 1, self.isa, self.IK) * tangx
+            + oc.arcDeriv(fy, 1, self.isa, self.IK) * tangy
+        )
 
     def computeDerivs(self):
         """
@@ -106,7 +119,7 @@ class capsules:
 
         # for k in range(self.nv):
         #     # compute single arclength derivative matrix
-            
+
         #     isa = self.isa[:, k]
         #     arcDeriv = isa[:, None] * D1
 
@@ -114,19 +127,18 @@ class capsules:
         #     D4 = D4 @ D4
         #     Ben[:, :, k] = torch.vstack([torch.hstack([torch.real(D4), torch.zeros((self.N, self.N), device=self.X.device)]),
         #                                torch.hstack([torch.zeros((self.N, self.N), device=self.X.device), torch.real(D4)])])
-            
+
         #     Ten[:, :, k] = torch.vstack([torch.matmul(torch.real(arcDeriv), torch.diag(self.xt[:self.N, k])),
         #                                torch.matmul(torch.real(arcDeriv), torch.diag(self.xt[self.N:, k]))])
-            
+
         #     Div[:, :, k] = torch.hstack([torch.matmul(torch.diag(self.xt[:self.N, k]), torch.real(arcDeriv)),
         #                               torch.matmul(torch.diag(self.xt[self.N:, k]), torch.real(arcDeriv))])
-            
 
         device = self.X.device
 
         isa_ = self.isa  # shape: (N, nv)
-        arcDeriv_ = isa_.unsqueeze(1) * D1.unsqueeze(-1) # shape: (N, N, nv)
-        arcDeriv_ = arcDeriv_.permute(2, 0, 1)   # shape: (nv, N, N)
+        arcDeriv_ = isa_.unsqueeze(1) * D1.unsqueeze(-1)  # shape: (N, N, nv)
+        arcDeriv_ = arcDeriv_.permute(2, 0, 1)  # shape: (nv, N, N)
         arcDeriv_real = torch.real(arcDeriv_)  # shape: (nv, N, N)
 
         # Compute D4 = (arcDeriv @ arcDeriv)^2
@@ -149,7 +161,9 @@ class capsules:
 
         # Create Div (N x 2N x nv)
         Div_left = torch.matmul(torch.diag_embed(xt_top.T), arcDeriv_real)  # (nv, N, N)
-        Div_right = torch.matmul(torch.diag_embed(xt_bot.T), arcDeriv_real)  # (nv, N, N)
+        Div_right = torch.matmul(
+            torch.diag_embed(xt_bot.T), arcDeriv_real
+        )  # (nv, N, N)
         Div_ = torch.cat([Div_left, Div_right], dim=2).permute(1, 2, 0)  # (N, 2N, nv)
 
         # print("computeDerivs checking...")
@@ -157,13 +171,13 @@ class capsules:
         #     print(torch.max((Ben - Ben_)/Ben))
         #     print(torch.min((Ben - Ben_)/Ben))
         #     raise "Ben mismatch!"
-             
+
         # if not torch.allclose(Ten, Ten_, rtol=4e-5):
         #     raise "Ten mismatch!"
-              
+
         # if not torch.allclose(Div, Div_, rtol=4e-5):
         #     raise "Div mismatch!"
-    
+
         # # Assume self.isa is of shape (N, nv), D1 is (N, N)
         # isa_expanded = self.isa.unsqueeze(1)  # Shape: (N, 1, nv)
         # arcDeriv = isa_expanded * D1.unsqueeze(-1)  # Shape: (N, N, nv)
@@ -175,7 +189,7 @@ class capsules:
         # # Construct Ben (batching operations)
         # zero_block = torch.zeros((self.N, self.N, self.nv), device=self.X.device)
         # Ben_ = torch.cat([
-        #     torch.cat([D4.real, zero_block], dim=1),  
+        #     torch.cat([D4.real, zero_block], dim=1),
         #     torch.cat([zero_block, D4.real], dim=1)
         # ], dim=0)  # Shape: (2N, 2N, nv)
 
@@ -185,19 +199,18 @@ class capsules:
         # xt_bottom = self.xt[self.N:, :].unsqueeze(1)  # Shape: (N, 1, nv)
 
         # Ten_ = torch.cat([
-        #     torch.matmul(arcDeriv_real, xt_top.diagonal(dim1=0, dim2=1)),  
+        #     torch.matmul(arcDeriv_real, xt_top.diagonal(dim1=0, dim2=1)),
         #     torch.matmul(arcDeriv_real, xt_bottom.diagonal(dim1=0, dim2=1))
         # ], dim=0)  # Shape: (2N, N, nv)
 
         # # Construct Div
         # Div_ = torch.cat([
-        #     torch.matmul(xt_top.diagonal(dim1=0, dim2=1), arcDeriv_real),  
+        #     torch.matmul(xt_top.diagonal(dim1=0, dim2=1), arcDeriv_real),
         #     torch.matmul(xt_bottom.diagonal(dim1=0, dim2=1), arcDeriv_real)
         # ], dim=1)  # Shape: (N, 2N, nv)
 
-        
         # print(torch.allclose(Ben, Ben_))
-            
+
         Ben = torch.real(Ben_)
         Ten = torch.real(Ten_)
         Div = torch.real(Div_)
@@ -205,7 +218,6 @@ class capsules:
 
         return Ben, Ten, Div
 
-    
     def repulsionForce(self, X, W, eta):
         """
         repulsion_force(o, X, W) computes the artificial repulsion between vesicles.
@@ -223,15 +235,23 @@ class capsules:
         rep_force = torch.zeros((2 * N, nv), dtype=torch.float32)
 
         # Pairwise differences for x and y across all points and vesicles
-        dist_x = X[:N, :].unsqueeze(1).unsqueeze(3) - X[:N, :].unsqueeze(0).unsqueeze(2)  # Shape: (N, N, nv, nv)
-        dist_y = X[N:, :].unsqueeze(1).unsqueeze(3) - X[N:, :].unsqueeze(0).unsqueeze(2)  # Shape: (N, N, nv, nv)
+        dist_x = X[:N, :].unsqueeze(1).unsqueeze(3) - X[:N, :].unsqueeze(0).unsqueeze(
+            2
+        )  # Shape: (N, N, nv, nv)
+        dist_y = X[N:, :].unsqueeze(1).unsqueeze(3) - X[N:, :].unsqueeze(0).unsqueeze(
+            2
+        )  # Shape: (N, N, nv, nv)
 
         # Compute the pairwise distances
         dist = torch.sqrt(dist_x**2 + dist_y**2 + 1e-10)
 
         # Mask out self-interactions
-        mask = torch.eye(nv, dtype=torch.bool, device=dist.device).unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, nv, nv)
-        dist.masked_fill_(mask, float('inf'))  # Set self-distances to infinity
+        mask = (
+            torch.eye(nv, dtype=torch.bool, device=dist.device)
+            .unsqueeze(0)
+            .unsqueeze(0)
+        )  # Shape: (1, 1, nv, nv)
+        dist.masked_fill_(mask, float("inf"))  # Set self-distances to infinity
 
         # Compute the maximum number of layers (L) for each distance
         # eta = 0.5 * VesicleLength/Number of Points
@@ -239,11 +259,70 @@ class capsules:
         L = torch.floor(eta / dist)
 
         # Compute stiffness values (dF)
-        dF = -L * (2 * L + 1) * (L + 1) / 3 + L * (L + 1) * eta / dist  # Shape: (N, N, nv, nv)
+        dF = (
+            -L * (2 * L + 1) * (L + 1) / 3 + L * (L + 1) * eta / dist
+        )  # Shape: (N, N, nv, nv)
 
         # Compute repulsion forces for all points in parallel
-        repx = torch.sum(dF * dist_x, dim=(1, 3)) # Shape: (N, nv)
-        repy = torch.sum(dF * dist_y, dim=(1, 3))  
+        repx = torch.sum(dF * dist_x, dim=(1, 3))  # Shape: (N, nv)
+        repy = torch.sum(dF * dist_y, dim=(1, 3))
+
+        # Concatenate x and y components and multiply by strength W
+        rep_force[:N, :] = W * repx
+        rep_force[N:, :] = W * repy
+
+        return rep_force
+
+    def dist_repulsionForce(self, X, W, eta, start, end, X_local, chunk, device):
+        """
+        repulsion_force(o, X, W) computes the artificial repulsion between vesicles.
+        W is the repulsion strength -- depends on the length and velocity scale
+        of the flow.
+
+        Repulsion is computed using the discrete penalty layers given in Grinspun
+        et al. (2009), Asynchronous Contact Mechanics.
+        """
+        # Number of vesicles and points
+        nv = X.shape[1]
+        N = X.shape[0] // 2
+
+        # Initialize net repulsive force on each point of each vesicle
+        rep_force = torch.zeros((2 * N, chunk), dtype=torch.float32)
+
+        # Pairwise differences for x and y across all points and vesicles
+        dist_x = X_local[:N, :].unsqueeze(1).unsqueeze(3) - X[:N, :].unsqueeze(
+            0
+        ).unsqueeze(2)  # Shape: (N, N, chunk, nv)
+        dist_y = X_local[N:, :].unsqueeze(1).unsqueeze(3) - X[N:, :].unsqueeze(
+            0
+        ).unsqueeze(2)  # Shape: (N, N, chunk, nv)
+
+        # Compute the pairwise distances
+        dist = torch.sqrt(dist_x**2 + dist_y**2 + 1e-10)
+
+        # Mask out self-interactions
+        local_target_globals = torch.arange(start, end, device=device)  # (chunk,)
+        global_sources = torch.arange(nv, device=device)  # (nv,)
+        same_ves_mask = (
+            local_target_globals[:, None] == global_sources[None, :]
+        )  # (chunk, nv)
+        mask = same_ves_mask.unsqueeze(0).unsqueeze(0)  # (1,1,chunk,nv)
+
+        dist.masked_fill_(mask, float("inf"))  # Set self-distances to infinity
+
+        # Compute the maximum number of layers (L) for each distance
+        # eta = 0.5 * VesicleLength/Number of Points
+        # eta = 1 / N
+        L = torch.floor(eta / dist)
+
+        # Compute stiffness values (dF)
+        dF = (
+            -L * (2 * L + 1) * (L + 1) / 3 + L * (L + 1) * eta / dist
+        )  # Shape: (N, N, nv, nv)
+
+        # Compute repulsion forces for all points in parallel
+        repx = torch.sum(dF * dist_x, dim=(1, 3))  # Shape: (N, nv)
+        repy = torch.sum(dF * dist_y, dim=(1, 3))
 
         # Concatenate x and y components and multiply by strength W
         rep_force[:N, :] = W * repx

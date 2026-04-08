@@ -147,10 +147,10 @@ def simulate(
 
     # /work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/
 
-    #Xics = np.load(
+    # Xics = np.load(
     #    "/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/shear_N32.npy"
-    #)  ### INIT SHAPES FROM THE DATA SET
-    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get('X')
+    # )  ### INIT SHAPES FROM THE DATA SET
+    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
     # Xics = np.load("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/48vesTG_N32.npy") ### INIT SHAPES FROM THE DATA SET
     # Xics = loadmat("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/ManyVesICsTaylorGreen/nv504IC.mat").get('X')
     # Xics = loadmat("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/ManyVesICsTaylorGreen/nv1020IC.mat").get('X')
@@ -289,8 +289,8 @@ def simulate(
         torch.from_numpy(nearNetOutputNorm).to(cur_dtype),
         None,
         None,
-        #torch.from_numpy(innerNearNetInputNorm).to(cur_dtype),
-        #torch.from_numpy(innerNearNetOutputNorm).to(cur_dtype),
+        # torch.from_numpy(innerNearNetInputNorm).to(cur_dtype),
+        # torch.from_numpy(innerNearNetOutputNorm).to(cur_dtype),
         torch.from_numpy(tenSelfNetInputNorm).to(cur_dtype),
         torch.from_numpy(tenSelfNetOutputNorm).to(cur_dtype),
         torch.from_numpy(tenAdvNetInputNorm).to(cur_dtype),
@@ -313,13 +313,13 @@ def simulate(
             break
 
     # ellipse = loadmat("../VF25_TG32Ves.mat").get('X')[:, 0:1]
-    #ellipse = np.load("relaxed_shape.npy")
-    #ellipse = torch.from_numpy(ellipse).float().to(device)
-    #center_ = oc.getPhysicalCenter(ellipse)
-    #ellipse[:32, :] -= center_[0]
-    #ellipse[32:, :] -= center_[1]
-    #mlarm.ellipse = ellipse
-    #logger.info(f"center is {oc.getPhysicalCenter(mlarm.ellipse)}")
+    # ellipse = np.load("relaxed_shape.npy")
+    # ellipse = torch.from_numpy(ellipse).float().to(device)
+    # center_ = oc.getPhysicalCenter(ellipse)
+    # ellipse[:32, :] -= center_[0]
+    # ellipse[32:, :] -= center_[1]
+    # mlarm.ellipse = ellipse
+    # logger.info(f"center is {oc.getPhysicalCenter(mlarm.ellipse)}")
 
     if save_intermediate:
         mlarm.Ten = torch.zeros((32, nv, 100))
@@ -354,23 +354,23 @@ def simulate(
         # mlarm.i += 1
         # mlarm.time_step_many_self()
         # np.save(f"shape_t{currtime}.npy", X)
-        #tEnd = time.time()
+        # tEnd = time.time()
 
         ## Find error in area and length
-        #area, length = oc.geomProp(X)[1:]
-        #errArea = torch.max(torch.abs(area - mlarm.area0) / mlarm.area0)
-        #errLen = torch.max(torch.abs(length - mlarm.len0) / mlarm.len0)
+        # area, length = oc.geomProp(X)[1:]
+        # errArea = torch.max(torch.abs(area - mlarm.area0) / mlarm.area0)
+        # errLen = torch.max(torch.abs(length - mlarm.len0) / mlarm.len0)
 
         ## Update counter and time
         ## it += 1
-        #currtime += dt
+        # currtime += dt
 
         ## Print time step info
-        #logger.info("********************************************")
-        #logger.info(f"{it + 1}th time step for N=32, time: {currtime}")
-        #logger.info(f"Solving with networks takes {tEnd - tStart} sec.")
-        #logger.info(f"Error in area and length: {max(errArea, errLen)}")
-        #logger.info("********************************************\n")
+        # logger.info("********************************************")
+        # logger.info(f"{it + 1}th time step for N=32, time: {currtime}")
+        # logger.info(f"Solving with networks takes {tEnd - tStart} sec.")
+        # logger.info(f"Error in area and length: {max(errArea, errLen)}")
+        # logger.info("********************************************\n")
 
         ## Save data
         output = np.concatenate(([currtime], X.cpu().numpy().T.flatten())).astype(

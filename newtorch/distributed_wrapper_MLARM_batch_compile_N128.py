@@ -333,7 +333,8 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         vesicleUp = capsules(upsample_fft(Xold, Nup), [], [], self.kappa, 1)
 
         # Compute velocity induced by repulsion force
-        repForce = torch.zeros_like(Xold)
+        Xold_local = Xold[:, self.start : self.end].to(self.device)
+        repForce_local = torch.zeros_like(Xold_local)
 
         # Compute bending forces + old tension forces
         fTen = vesicle.tensionTerm(tenOld)
@@ -341,8 +342,8 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         fBend = downsample_fft(fBend, N)
 
         tracJump = fBend + fTen  # total elastic force
+        tracJump_local = tracJump[:, self.start : self.end].to(self.device)
 
-        Xold_local = Xold[:, self.start : self.end].to(self.device)
         Xstand_local, standardizationValues_local = self.standardizationStep(Xold_local)
 
         # Explicit Tension at the Current Step
@@ -357,144 +358,34 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             ylayers_local,
         ) = self.predictNearLayers(Xstand_local, standardizationValues_local, nlayers)
 
-        velx_real_local = velx_real_local.contiguous()
-        vely_real_local = vely_real_local.contiguous()
-        velx_imag_local = velx_imag_local.contiguous()
-        vely_imag_local = vely_imag_local.contiguous()
-        xlayers_local = xlayers_local.contiguous()
-        ylayers_local = ylayers_local.contiguous()
         standardizationValues_local = list(standardizationValues_local)
 
-        for i in range(len(standardizationValues_local)):
-            standardizationValues_local[i] = standardizationValues_local[i].contiguous()
-
-        if self.first_iter:
-            self.gather_velx_real = [
-                torch.zeros_like(velx_real_local, device=self.device)
-                for _ in range(self.size)
-            ]
-            self.gather_vely_real = [
-                torch.zeros_like(vely_real_local, device=self.device)
-                for _ in range(self.size)
-            ]
-            self.gather_velx_imag = [
-                torch.zeros_like(velx_imag_local, device=self.device)
-                for _ in range(self.size)
-            ]
-            self.gather_vely_imag = [
-                torch.zeros_like(vely_imag_local, device=self.device)
-                for _ in range(self.size)
-            ]
-            self.gather_standardizationValues = [
-                torch.zeros_like(standardizationValues_local[0], device=self.device)
-                for _ in range(self.size)
-            ]
-            # Last row has int data type, need another buffer
-            self.gather_last_standardValues = [
-                torch.zeros_like(standardizationValues_local[-1], device=self.device)
-                for _ in range(self.size)
-            ]
-
-        dist.all_gather(self.gather_velx_real, velx_real_local)
-        dist.all_gather(self.gather_vely_real, vely_real_local)
-        dist.all_gather(self.gather_velx_imag, velx_imag_local)
-        dist.all_gather(self.gather_vely_imag, vely_imag_local)
-
-        velx_real = torch.cat(self.gather_velx_real, dim=0)
-        vely_real = torch.cat(self.gather_vely_real, dim=0)
-        velx_imag = torch.cat(self.gather_velx_imag, dim=0)
-        vely_imag = torch.cat(self.gather_vely_imag, dim=0)
-
-        if self.first_iter:
-            self.gather_xlayers = [
-                torch.zeros_like(xlayers_local, device=self.device)
-                for _ in range(self.size)
-            ]
-            self.gather_ylayers = [
-                torch.zeros_like(ylayers_local, device=self.device)
-                for _ in range(self.size)
-            ]
-
-        dist.all_gather(self.gather_xlayers, xlayers_local)
-        dist.all_gather(self.gather_ylayers, ylayers_local)
-
-        standardizationValues = []
-        for i in range(len(standardizationValues_local)):
-            if i == len(standardizationValues_local) - 1:
-                dist.all_gather(
-                    self.gather_last_standardValues,
-                    standardizationValues_local[i],
-                )
-
-                standardizationValues.append(
-                    torch.cat(self.gather_last_standardValues, dim=0)
-                )
-                continue
-
-            dist.all_gather(
-                self.gather_standardizationValues,
-                standardizationValues_local[i],
-            )
-
-            standardizationValues.append(
-                torch.cat(self.gather_standardizationValues, dim=0)
-            )
-
-        xlayers = torch.cat(self.gather_xlayers, dim=2)
-        ylayers = torch.cat(self.gather_ylayers, dim=2)
-
-        # NEED SYNCHRONIZATION
         info_rbf, info_stokes = None, None
 
-        if self.rbf_upsample <= 2:
-            # const = 0.495 * self.len0[0].item() * 4
-            # const = 1.7 / 128
-            const = 0.0132
-        if self.rbf_upsample == 2:
-            xlayers = interpft(xlayers.reshape(N, -1), N * 2)
-            ylayers = interpft(ylayers.reshape(N, -1), N * 2)
-            # build coordinate tensor
-
-        all_X = torch.concat(
-            (xlayers.reshape(-1, 1, nv), ylayers.reshape(-1, 1, nv)), dim=1
-        )  # (nlayers * N, 2, nv), 2 for x and y
-        # all_X = all_X /const * N
-        all_X = all_X / const
-        matrices = torch.exp(
-            -torch.sum((all_X[:, None] - all_X[None, ...]) ** 2, dim=-2)
-        )
-        matrices += (
-            torch.eye(all_X.shape[0], device=self.device).unsqueeze(-1) * 1e-4
-        ).expand(-1, -1, nv)  # (nlayers*N, nlayers*N, nv)
-
-        L = torch.linalg.cholesky(matrices.permute(2, 0, 1))
-
-        farFieldtracJump, info_rbf, info_stokes = self.computeStokesInteractions_noinfo(
-            vesicle,
-            vesicleUp,
-            info_rbf,
-            info_stokes,
-            L,
-            tracJump,
-            repForce,
-            velx_real,
-            vely_real,
-            velx_imag,
-            vely_imag,
-            xlayers,
-            ylayers,
-            standardizationValues,
-            nlayers,
-            first=True,
+        farFieldtracJump_local, info_rbf, info_stokes = (
+            self.computeStokesInteractions_noinfo(
+                vesicle,
+                vesicleUp,
+                info_rbf,
+                info_stokes,
+                tracJump_local,
+                repForce_local,
+                velx_real_local,
+                vely_real_local,
+                velx_imag_local,
+                vely_imag_local,
+                standardizationValues_local,
+                first=True,
+            )
         )
 
-        farFieldtracJump = filterShape(farFieldtracJump, 16)
+        farFieldtracJump_local = filterShape(farFieldtracJump_local, 16)
         # print(
         #    f"monitoring 1st farfieldtracjump magnitude: {torch.max(torch.abs(farFieldtracJump))}"
         # )
+        vback_local = vback[:, self.start : self.end].to(self.device, non_blocking=True)
 
-        vinf = vback + farFieldtracJump
-        vinf_local = vinf[:, self.start : self.end].to(self.device, non_blocking=True)
+        vinf_local = vback_local + farFieldtracJump_local
 
         vBack_local = self.invTenMatOnVback(
             Xstand_local, standardizationValues_local, vinf_local
@@ -512,47 +403,39 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         fTen_new = vesicle.tensionTerm(tenNew)
         tracJump = fBend + fTen_new
+        tracJump_local = tracJump[:, self.start : self.end].to(self.device)
 
-        farFieldtracJump, _, _ = self.computeStokesInteractions_noinfo(
+        farFieldtracJump_local, _, _ = self.computeStokesInteractions_noinfo(
             vesicle,
             vesicleUp,
             info_rbf,
             info_stokes,
-            L,
-            tracJump,
-            repForce,
-            velx_real,
-            vely_real,
-            velx_imag,
-            vely_imag,
-            xlayers,
-            ylayers,
-            standardizationValues,
-            nlayers,
+            tracJump_local,
+            repForce_local,
+            velx_real_local,
+            vely_real_local,
+            velx_imag_local,
+            vely_imag_local,
+            standardizationValues_local,
             first=False,
         )
 
-        farFieldtracJump = filterShape(farFieldtracJump, 16)
+        farFieldtracJump_local = filterShape(farFieldtracJump_local, 16)
 
-        if torch.any(torch.isnan(farFieldtracJump)) or torch.any(
-            torch.isinf(farFieldtracJump)
+        if torch.any(torch.isnan(farFieldtracJump_local)) or torch.any(
+            torch.isinf(farFieldtracJump_local)
         ):
             print("before_farFieldtacJump has nan or inf")
 
-        if torch.any(torch.isnan(farFieldtracJump)) or torch.any(
-            torch.isinf(farFieldtracJump)
+        if torch.any(torch.isnan(farFieldtracJump_local)) or torch.any(
+            torch.isinf(farFieldtracJump_local)
         ):
             print("farFieldtacJump has nan or inf")
 
-        vbackTotal = vback + farFieldtracJump
-
-        Xlocal = Xold[:, self.start : self.end].to(self.device, non_blocking=True)
-        vbackTotal_local = vbackTotal[:, self.start : self.end].to(
-            self.device, non_blocking=True
-        )
+        vbackTotal_local = vback_local + farFieldtracJump_local
 
         Xadv_local = self.translateVinfwTorch(
-            Xlocal, Xstand_local, standardizationValues_local, vbackTotal_local
+            Xold_local, Xstand_local, standardizationValues_local, vbackTotal_local
         )
 
         if torch.any(torch.isnan(Xadv_local)) or torch.any(torch.isinf(Xadv_local)):
@@ -785,312 +668,106 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         vesicleUp,
         info_rbf,
         info_stokes,
-        L,
-        trac_jump,
-        repForce,
-        velx_real,
-        vely_real,
-        velx_imag,
-        vely_imag,
-        xlayers,
-        ylayers,
-        standardizationValues,
-        nlayers,
+        trac_jump_local,
+        repForce_local,
+        velx_real_local,
+        vely_real_local,
+        velx_imag_local,
+        vely_imag_local,
+        standardizationValues_local,
         first: bool,
-        upsample=True,
     ):
-        # print('Near-singular interaction through interpolation and network')
-
-        velx, vely = self.buildVelocityInNear(
-            trac_jump + repForce,
-            velx_real,
-            vely_real,
-            velx_imag,
-            vely_imag,
-            standardizationValues,
-            nlayers,
-        )
-        rep_velx, rep_vely = self.buildVelocityInNear(
-            repForce,
-            velx_real[..., 2:3],
-            vely_real[..., 2:3],
-            velx_imag[..., 2:3],
-            vely_imag[..., 2:3],
-            standardizationValues,
+        rep_velx_local, rep_vely_local = self.buildVelocityInNear(
+            repForce_local,
+            velx_real_local[..., 2:3],
+            vely_real_local[..., 2:3],
+            velx_imag_local[..., 2:3],
+            vely_imag_local[..., 2:3],
+            standardizationValues_local,
             1,
         )
 
-        totalForce = trac_jump + repForce
-        # if upsample:
+        totalForce_local = trac_jump_local + repForce_local
         N = vesicle.N
         nv = vesicle.nv
         Nup = ceil(sqrt(N)) * N
         length = 1.0
-        # totalForceUp = torch.concat((interpft(totalForce[:N], Nup),interpft(totalForce[N:], Nup)), dim=0)
-        totalForceUp = upsample_fft(totalForce, Nup)
+        totalForceUp_local = upsample_fft(totalForce_local, Nup)
+
+        totalForceUp_gather = [
+            torch.zeros_like(totalForceUp_local, device=self.device)
+            for _ in range(self.size)
+        ]
+        dist.all_gather(totalForceUp_gather, totalForceUp_local)
+        totalForceUp = torch.cat(totalForceUp_gather, dim=1)
+
+        def iter_blocks(start_global: int, end_global: int, num_parts: int):
+            n = end_global - start_global
+            for i in range(num_parts):
+                s = start_global + i * n // num_parts
+                e = start_global + (i + 1) * n // num_parts
+                yield s, e
+
+        if nv // self.size > 1048:
+            num_parts = 10
+        elif nv // self.size > 504:
+            num_parts = 4
+        elif nv // self.size > 100:
+            num_parts = 2
+        else:
+            num_parts = 1
 
         # start.record()
         if first:
-            # NEED SYNCHRONIZATION
             fn = allExactStokesSLTarget_compare1
-            if nv > 1048:
-                num_parts = 10
-                far_fields = []
-                info_stokes_parts = [[], [], []]
+            far_fields = []
+            info_stokes_parts = [[], [], []]
+            for start, end in iter_blocks(self.start, self.end, num_parts):
+                far_field, info_stokes_part = fn(
+                    vesicleUp.X,
+                    vesicleUp.sa,
+                    totalForceUp,
+                    vesicle.X[:, start:end],
+                    length,
+                    offset=start,
+                )
+                far_fields.append(far_field)
 
-                for i in range(num_parts):
-                    start = i * nv // num_parts
-                    end = (
-                        (i + 1) * nv // num_parts if i < num_parts - 1 else None
-                    )  # Ensure last slice goes to the end
-                    offset = start if i > 0 else 0  # Offset is None for the first call
+                for j in range(3):
+                    info_stokes_parts[j].append(info_stokes_part[j])
 
-                    far_field, info_stokes = fn(
-                        vesicleUp.X,
-                        vesicleUp.sa,
-                        totalForceUp,
-                        vesicle.X[:, start:end],
-                        length,
-                        offset=offset,
-                    )
-
-                    far_fields.append(far_field)
-                    for j in range(3):
-                        info_stokes_parts[j].append(info_stokes[j])
-
-                far_field_1 = torch.concat(far_fields, dim=-1)
-                info_stokes = tuple(
-                    torch.cat(parts, dim=0) for parts in info_stokes_parts
-                )
-
-            elif nv > 504:
-                far_field_1_1, info_stokes_1 = fn(
-                    vesicleUp.X,
-                    vesicleUp.sa,
-                    totalForceUp,
-                    vesicle.X[:, : nv // 4],
-                    length,
-                )
-                far_field_1_2, info_stokes_2 = fn(
-                    vesicleUp.X,
-                    vesicleUp.sa,
-                    totalForceUp,
-                    vesicle.X[:, nv // 4 : nv // 2],
-                    length,
-                    offset=nv // 4,
-                )
-                far_field_1_3, info_stokes_3 = fn(
-                    vesicleUp.X,
-                    vesicleUp.sa,
-                    totalForceUp,
-                    vesicle.X[:, nv // 2 : 3 * nv // 4],
-                    length,
-                    offset=nv // 2,
-                )
-                far_field_1_4, info_stokes_4 = fn(
-                    vesicleUp.X,
-                    vesicleUp.sa,
-                    totalForceUp,
-                    vesicle.X[:, 3 * nv // 4 :],
-                    length,
-                    offset=3 * nv // 4,
-                )
-                far_field_1 = torch.concat(
-                    (far_field_1_1, far_field_1_2, far_field_1_3, far_field_1_4), dim=-1
-                )
-                info_stokes = (
-                    torch.cat(
-                        (
-                            info_stokes_1[0],
-                            info_stokes_2[0],
-                            info_stokes_3[0],
-                            info_stokes_4[0],
-                        ),
-                        dim=0,
-                    ),
-                    torch.cat(
-                        (
-                            info_stokes_1[1],
-                            info_stokes_2[1],
-                            info_stokes_3[1],
-                            info_stokes_4[1],
-                        ),
-                        dim=0,
-                    ),
-                    torch.cat(
-                        (
-                            info_stokes_1[2],
-                            info_stokes_2[2],
-                            info_stokes_3[2],
-                            info_stokes_4[2],
-                        ),
-                        dim=0,
-                    ),
-                )
-            elif nv > 100:
-                far_field_1_1, info_stokes_1 = fn(
-                    vesicleUp.X,
-                    vesicleUp.sa,
-                    totalForceUp,
-                    vesicle.X[:, : nv // 2],
-                    length,
-                )
-                far_field_1_2, info_stokes_2 = fn(
-                    vesicleUp.X,
-                    vesicleUp.sa,
-                    totalForceUp,
-                    vesicle.X[:, nv // 2 :],
-                    length,
-                    offset=nv // 2,
-                )
-                far_field_1 = torch.concat((far_field_1_1, far_field_1_2), dim=-1)
-                info_stokes = (
-                    torch.cat((info_stokes_1[0], info_stokes_2[0]), dim=0),
-                    torch.cat((info_stokes_1[1], info_stokes_2[1]), dim=0),
-                    torch.cat((info_stokes_1[2], info_stokes_2[2]), dim=0),
-                )
-            else:
-                far_field_1, info_stokes = fn(
-                    vesicleUp.X, vesicleUp.sa, totalForceUp, vesicle.X, length
-                )
+            far_field_1 = torch.cat(far_fields, dim=1)
+            info_stokes = tuple(torch.cat(parts, dim=0) for parts in info_stokes_parts)
             id1 = info_stokes[2] * N + info_stokes[1]
             id2 = info_stokes[0] + 1 * (info_stokes[0] >= info_stokes[2])
             info_rbf = (id1, id2)
 
         else:
-            # NEED SYNCHRONIZATION
+            # May need to sync info_stokes before this
             fn = allExactStokesSLTarget_compare2
-            if nv > 1048:
-                far_fields = []
-                num_parts = 10
-                for i in range(num_parts):
-                    start = i * nv // num_parts
-                    end = (
-                        (i + 1) * nv // num_parts if i < num_parts - 1 else None
-                    )  # Ensure last slice goes to the end
-                    offset = start if i > 0 else 0  # Offset is None for the first call
 
-                    mask = (
-                        (start <= info_stokes[2]) & (info_stokes[2] < end)
-                        if i < num_parts - 1
-                        else (start <= info_stokes[2])
-                    )
+            far_fields = []
 
-                    far_field = fn(
-                        vesicleUp.X,
-                        vesicleUp.sa,
-                        totalForceUp,
-                        vesicle.X[:, start:end],
-                        info_stokes[0][mask],
-                        info_stokes[1][mask],
-                        info_stokes[2][mask] - start,
-                        offset=offset,
-                    )
+            for start, end in iter_blocks(self.start, self.end, num_parts):
+                mask = (start <= info_stokes[2]) & (info_stokes[2] < end)
 
-                    far_fields.append(far_field)
-
-                far_field_1 = torch.concat(far_fields, dim=1)
-
-            elif nv > 504:
-                far_field_1 = torch.concat(
-                    (
-                        fn(
-                            vesicleUp.X,
-                            vesicleUp.sa,
-                            totalForceUp,
-                            vesicle.X[:, : nv // 4],
-                            info_stokes[0][info_stokes[2] < nv // 4],
-                            info_stokes[1][info_stokes[2] < nv // 4],
-                            info_stokes[2][info_stokes[2] < nv // 4],
-                        ),
-                        fn(
-                            vesicleUp.X,
-                            vesicleUp.sa,
-                            totalForceUp,
-                            vesicle.X[:, nv // 4 : nv // 2],
-                            info_stokes[0][
-                                (nv // 4 <= info_stokes[2]) & (info_stokes[2] < nv // 2)
-                            ],
-                            info_stokes[1][
-                                (nv // 4 <= info_stokes[2]) & (info_stokes[2] < nv // 2)
-                            ],
-                            info_stokes[2][
-                                (nv // 4 <= info_stokes[2]) & (info_stokes[2] < nv // 2)
-                            ]
-                            - nv // 4,
-                            offset=nv // 4,
-                        ),
-                        fn(
-                            vesicleUp.X,
-                            vesicleUp.sa,
-                            totalForceUp,
-                            vesicle.X[:, nv // 2 : 3 * nv // 4],
-                            info_stokes[0][
-                                (nv // 2 <= info_stokes[2])
-                                & (info_stokes[2] < 3 * nv // 4)
-                            ],
-                            info_stokes[1][
-                                (nv // 2 <= info_stokes[2])
-                                & (info_stokes[2] < 3 * nv // 4)
-                            ],
-                            info_stokes[2][
-                                (nv // 2 <= info_stokes[2])
-                                & (info_stokes[2] < 3 * nv // 4)
-                            ]
-                            - nv // 2,
-                            offset=nv // 2,
-                        ),
-                        fn(
-                            vesicleUp.X,
-                            vesicleUp.sa,
-                            totalForceUp,
-                            vesicle.X[:, 3 * nv // 4 :],
-                            info_stokes[0][3 * nv // 4 <= info_stokes[2]],
-                            info_stokes[1][3 * nv // 4 <= info_stokes[2]],
-                            info_stokes[2][3 * nv // 4 <= info_stokes[2]] - 3 * nv // 4,
-                            offset=3 * nv // 4,
-                        ),
-                    ),
-                    dim=1,
-                )
-            elif nv > 100:
-                far_field_1 = torch.concat(
-                    (
-                        fn(
-                            vesicleUp.X,
-                            vesicleUp.sa,
-                            totalForceUp,
-                            vesicle.X[:, : nv // 2],
-                            info_stokes[0][info_stokes[2] < nv // 2],
-                            info_stokes[1][info_stokes[2] < nv // 2],
-                            info_stokes[2][info_stokes[2] < nv // 2],
-                        ),
-                        fn(
-                            vesicleUp.X,
-                            vesicleUp.sa,
-                            totalForceUp,
-                            vesicle.X[:, nv // 2 :],
-                            info_stokes[0][nv // 2 <= info_stokes[2]],
-                            info_stokes[1][nv // 2 <= info_stokes[2]],
-                            info_stokes[2][nv // 2 <= info_stokes[2]] - nv // 2,
-                            offset=nv // 2,
-                        ),
-                    ),
-                    dim=1,
-                )
-
-            else:
-                far_field_1 = fn(
+                far_field = fn(
                     vesicleUp.X,
                     vesicleUp.sa,
                     totalForceUp,
-                    vesicle.X,
-                    info_stokes[0],
-                    info_stokes[1],
-                    info_stokes[2],
+                    vesicle.X[:, start:end],
+                    info_stokes[0][mask],
+                    info_stokes[1][mask],
+                    info_stokes[2][mask] - start,
+                    offset=start,
                 )
+                far_fields.append(far_field)
 
-        selfRepVel = torch.concat((rep_velx.squeeze(1), rep_vely.squeeze(1)), dim=0)
+            far_field_1 = torch.cat(far_fields, dim=1)
+
+        selfRepVel = torch.concat(
+            (rep_velx_local.squeeze(1), rep_vely_local.squeeze(1)), dim=0
+        )
         return far_field_1 + selfRepVel, info_rbf, info_stokes
 
     # @torch.jit.script_method

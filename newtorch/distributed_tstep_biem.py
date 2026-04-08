@@ -1,9 +1,5 @@
-from petsc4py import PETSc
-
-print(PETSc.Sys.getVersion())
-print("CUDA available:", PETSc.Sys.hasExternalPackage("cuda"))
-
 import torch
+from torch import distributed as dist
 import numpy as np
 import math
 
@@ -41,13 +37,21 @@ class TStepBiem:
     time step size.
     """
 
-    def __init__(self, X, Xwalls, options, prams):
+    def __init__(self, X, Xwalls, options, prams, rank, size, device):
         oc = Curve()
 
         self.Xwalls = Xwalls  # Points coordinates on walls
         _, self.area, self.length = oc.geomProp(X)  # vesicles' initial area and length
 
         self.dt = prams["dt"]  # Time step size
+        self.rank = rank
+        self.size = size
+        self.nv = X.shape[1]
+        self.chunk = self.nv // size
+
+        self.start = rank * self.chunk
+        self.end = (rank + 1) * self.chunk
+        self.device = device
 
         # Method always starts at time 0
         self.currentTime = 0.0
@@ -195,13 +199,15 @@ class TStepBiem:
         """
         vesicle = capsules(Xstore, sigStore, None, self.kappa, self.viscCont)
         # print("After vesicle", torch.cuda.memory_allocated())
+        Xstore_local = Xstore[:, self.start : self.end].to(self.device)
+        sigStore_local = sigStore[:, self.start : self.end].to(self.device)
+
+        vesicle_local = capsules(
+            Xstore_local, sigStore_local, None, self.kappa, self.viscCont
+        )
 
         N = Xstore.shape[0] // 2  # Number of points per vesicle
         nv = Xstore.shape[1]  # Number of vesicles
-
-        if self.Xwalls:
-            Nbd = self.Xwalls.shape[0] // 2  # Number of points on the solid walls
-            nvbd = self.Xwalls.shape[1]  # Number of wall components
 
         # Constant in front of time derivative
         alpha = (1.0 + self.viscCont) / 2
@@ -209,178 +215,93 @@ class TStepBiem:
 
         # Build single-layer potential matrix
         op = self.op
-        self.Galpert = op.stokesSLmatrix(vesicle)
+        # self.Galpert = op.stokesSLmatrix(vesicle)
+        self.Galpert_local = op.stokesSLmatrix(vesicle_local)
         # print("After galpert", torch.cuda.memory_allocated())
-
-        # Double-layer potential matrix (if viscosity contrast)
-        self.D = []
-        if torch.any(self.viscCont != 1):
-            self.D = op.stokesDLmatrix(vesicle)
-
-        # Near-singular integration zones
-        if self.confined:
-            self.NearV2V, self.NearV2W = vesicle.getZone(self.walls, 3)
-
-            if nvbd == 1:
-                self.NearW2W, self.NearW2V = self.walls.getZone(vesicle, 2)
-            else:
-                if self.NearW2W is None:
-                    self.NearW2W, self.NearW2V = self.walls.getZone(vesicle, 3)
-                else:
-                    _, self.NearW2V = self.walls.getZone(vesicle, 2)
-        else:
-            self.NearV2V = naiveNearZoneInfo(Xstore, interpft_vec(Xstore, op.Nup))
-            self.NearV2W = self.NearW2V = self.NearW2W = None
 
         # print("nearZone finished")
         # Right-hand side components
-        rhs1 = Xstore
-        rhs2 = torch.zeros((N, nv), dtype=Xstore.dtype, device=Xstore.device)
-        rhs3 = self.walls.u if self.confined else None
-
-        # --- Viscosity contrast ---
-        if torch.any(vesicle.viscCont != 1):
-            jump = 0.5 * (1 - vesicle.viscCont)
-            DLP = lambda X: X @ torch.diag(jump) + op.exactStokesDLdiag(
-                vesicle, self.D, X
-            )
-
-            Fdlp = op.nearSingInt(
-                vesicle, Xstore, DLP, self.NearV2V, op.exactStokesDL, vesicle, True
-            )
-            FDLPwall = (
-                op.nearSingInt(
-                    vesicle,
-                    Xstore,
-                    DLP,
-                    self.NearV2W,
-                    op.exactStokesDL,
-                    self.walls,
-                    False,
-                )
-                if self.confined
-                else None
-            )
-        else:
-            Fdlp = torch.zeros((2 * N, nv), dtype=Xstore.dtype, device=Xstore.device)
-            FDLPwall = (
-                torch.zeros((2 * Nbd, nvbd), dtype=Xstore.dtype, device=Xstore.device)
-                if self.confined
-                else None
-            )
-
-        if torch.any(self.viscCont != 1):
-            DXo = op.exactStokesDLdiag(vesicle, self.D, Xstore)
-            rhs1 = rhs1 - (Fdlp + DXo) @ torch.diag(1.0 / alpha)
-
-        if self.confined:
-            rhs3 = rhs3 + FDLPwall / self.dt
+        rhs1_local = Xstore_local
+        rhs2_local = torch.zeros(
+            (N, self.chunk), dtype=Xstore.dtype, device=Xstore.device
+        )
 
         # --- Repulsion ---
         if self.repulsion:
-            if not self.confined:
-                repulsion = vesicle.repulsionForce(
-                    Xstore, self.repStrength, self.minDist
-                )
-            else:
-                repulsion = vesicle.repulsionScheme(
-                    self.Xrep, self.repStrength, self.minDist, self.walls, None, None
-                )
+            repulsion_local = vesicle.repulsionForce(
+                Xstore_local, self.repStrength, self.minDist
+            )
+            Galpert_gather = [
+                torch.zeros_like(self.Galpert_local) for _ in range(self.size)
+            ]
+            dist.all_gather(Galpert_gather, self.Galpert_local)
+            self.Galpert = torch.cat(Galpert_gather, dim=2)
 
-            Frepulsion = op.exactStokesSLdiag(vesicle, self.Galpert, repulsion)
+            repulsion_gather = [
+                torch.zeros_like(repulsion_local) for _ in range(self.size)
+            ]
+            dist.all_gather(repulsion_gather, repulsion_local)
+            repulsion_global = torch.cat(repulsion_gather, dim=1)
+
+            Frepulsion_local = op.exactStokesSLdiag(
+                vesicle_local, self.Galpert_local, repulsion_local
+            )
             SLP = lambda X: op.exactStokesSLdiag(vesicle, self.Galpert, X)
+
             # Frepulsion += op.nearSingInt(vesicle, repulsion, SLP, self.NearV2V, op.exactStokesSL, vesicle, True)
-            Frepulsion += op.nearSingInt_rbf(
+            Frepulsion_local += op.dist_nearSingInt_rbf(
                 vesicle,
-                repulsion,
+                repulsion_global,
                 SLP,
                 self.NearV2V,
-                wrapper_allExactStokesSLTarget_compare2,
-                vesicle,
+                wrapper_allExactStokesSLTarget_compare2,  # change to make it target vesicles
+                vesicle_local,
                 True,
+                self.start,
+                self.end,
             )
 
-            FREPwall = (
-                op.nearSingInt(
-                    vesicle,
-                    repulsion,
-                    SLP,
-                    self.NearV2W,
-                    op.exactStokesSL,
-                    self.walls,
-                    False,
-                )
-                if self.confined
-                else None
+            rhs1_local = rhs1_local + self.dt * Frepulsion_local @ torch.diag(
+                1.0 / alpha
             )
-
-            rhs1 = rhs1 + self.dt * Frepulsion @ torch.diag(1.0 / alpha)
-            if self.confined:
-                rhs3 = rhs3 - FREPwall
 
         # --- Far-field background flow ---
-        if not self.confined:
-            vInf = self.farField(Xstore)
-            rhs1 = rhs1 + self.dt * vInf @ torch.diag(1.0 / alpha)
+        vInf_local = self.farField(Xstore_local)
+        rhs1_local = rhs1_local + self.dt * vInf_local @ torch.diag(1.0 / alpha)
 
         # --- Inextensibility condition ---
-        rhs2 = rhs2 + vesicle.surfaceDiv(Xstore)
-
-        if torch.any(vesicle.viscCont != 1) and self.confined:
-            rhs3 = rhs3 * self.dt
+        rhs2_local = rhs2_local + vesicle.surfaceDiv(Xstore_local)
 
         # --- Stack RHS ---
-        rhs = torch.cat([rhs1, rhs2], dim=0)
-        rhs = (
-            torch.cat([rhs.T.reshape(-1), rhs3.T.reshape(-1)])
-            if rhs3 is not None
-            else rhs.T.reshape(-1)
-        )
-        rhs = (
-            torch.cat(
-                [rhs, torch.zeros(3 * (nvbd - 1), dtype=rhs.dtype, device=rhs.device)]
-            )
-            if self.confined
-            else rhs
-        )
+        rhs_local = torch.cat([rhs1_local, rhs2_local], dim=0)
+        rhs_local = rhs_local.T.reshape(-1)
 
         # --- Preconditioner ---
         if self.usePreco:
-            Ben, Ten, Div = vesicle.computeDerivs()
-            bdiagVes_LU = torch.zeros((3 * N, 3 * N, nv))
+            Ben_local, Ten_local, Div_local = vesicle_local.computeDerivs()
+            bdiagVes_LU = torch.zeros((3 * N, 3 * N, self.chunk))
             bdiagVes_P = torch.zeros((3 * N, nv), dtype=torch.int32)
 
-            I = torch.eye(2 * N).unsqueeze(-1).repeat(1, 1, nv)  # (2N, 2N, nv)
-            Z = torch.zeros((N, N, nv))  # (N, N, nv)
+            I = torch.eye(2 * N).unsqueeze(-1).repeat(1, 1, self.chunk)  # (2N, 2N, nv)
+            Z = torch.zeros((N, N, self.chunk))  # (N, N, nv)
 
             # Shared blocks
-            G_Ben = torch.matmul(
-                self.Galpert.permute(2, 0, 1), Ben.permute(2, 0, 1)
+            G_Ben_local = torch.matmul(
+                self.Galpert_local.permute(2, 0, 1), Ben_local.permute(2, 0, 1)
             ).permute(1, 2, 0)  # (2N, N, nv)
-            G_Ten = torch.matmul(
-                self.Galpert.permute(2, 0, 1), Ten.permute(2, 0, 1)
+            G_Ten_local = torch.matmul(
+                self.Galpert_local.permute(2, 0, 1), Ten_local.permute(2, 0, 1)
             ).permute(1, 2, 0)  # (2N, N, nv)
-            DivZ = torch.cat([Div, Z], dim=1)  # (N, 3N, nv)
+            DivZ = torch.cat([Div_local, Z], dim=1)  # (N, 3N, nv)
 
             # Compute alpha-inv terms
-            alpha_inv = 1.0 / alpha.view(1, 1, nv)  # shape (1, 1, nv)
-
-            # Boolean mask: where viscCont != 1
-            mask = (self.viscCont != 1).view(1, 1, nv)
+            alpha_inv = 1.0 / alpha.view(1, 1, self.chunk)  # shape (1, 1, nv)
 
             # Build top-left block
-            if torch.max(mask):
-                top_left = (
-                    I
-                    - self.D * alpha_inv * mask
-                    + self.dt * vesicle.kappa * G_Ben * mask * alpha_inv
-                    - self.dt * G_Ten * alpha_inv
-                )
-            else:
-                top_left = I + self.dt * vesicle.kappa * G_Ben
+            top_left = I + self.dt * vesicle.kappa * G_Ben_local
 
             # Top-right block (same in both cases)
-            top_right = -self.dt * G_Ten * alpha_inv
+            top_right = -self.dt * G_Ten_local * alpha_inv
 
             # Combine top blocks
             top = torch.cat([top_left, top_right], dim=1)  # (2N, 3N, nv)
@@ -396,14 +317,11 @@ class TStepBiem:
 
         # --- GMRES solve ---
         initGMRES = torch.cat((Xstore, sigStore), dim=0).double().T.reshape(-1)
-        if self.confined:
-            RS = RSstore[:, 1:]
-            initGMRES = torch.cat([initGMRES, etaStore.view(-1), RS.view(-1)])
 
         global matvecs
         matvecs = 0
 
-        gmres_func = lambda X: self.time_matvec(X, vesicle)
+        gmres_func = lambda X: self.time_matvec(X, Xstore_local, vesicle, vesicle_local)
         cupy_lin_op = LinearOperator(
             (initGMRES.shape[0], initGMRES.shape[0]), gmres_func
         )
@@ -437,7 +355,7 @@ class TStepBiem:
                 )
         else:
             Xn, info = gmres(
-                cupy_lin_op, rhs, tol=self.gmresTol, maxiter=self.gmresMaxIter
+                cupy_lin_op, rhs_local, tol=self.gmresTol, maxiter=self.gmresMaxIter
             )
 
         # print(f"gmres takes {counter.niter} iterations")
@@ -448,220 +366,98 @@ class TStepBiem:
         Xn = torch.as_tensor(Xn, dtype=torch.float32)
 
         # --- Unstack results ---
-        eta = torch.zeros((2 * Nbd, nvbd), dtype=Xn.dtype) if self.confined else None
-        RS = torch.zeros((3, nvbd), dtype=Xn.dtype) if self.confined else None
+        eta = None
+        RS = None
 
-        Xn_reshaped = Xn.view(nv, 3, N)  # [nv, 3, N]
+        Xn_reshaped = Xn.view(nv, 3, N)
         X_ = Xn_reshaped[:, 0:2, :].reshape(nv, 2 * N).transpose(0, 1).clone()
         sigma_ = Xn_reshaped[:, 2, :].T.clone().to(dtype=torch.float64)
 
-        if self.confined:
-            Xn = Xn[3 * nv * N :]
-            for k in range(nvbd):
-                eta[:, k] = Xn[2 * Nbd * k : 2 * Nbd * (k + 1)]
-
-            otlets = Xn[2 * Nbd * nvbd :]
-            for k in range(1, nvbd):
-                RS[:, k] = otlets[3 * (k - 1) : 3 * k]
-
         return X_, sigma_, eta, RS, iter, iflag
 
-    def time_matvec(self, Xn, vesicle):
+    def time_matvec(self, Xn, Xn_local, vesicle, vesicle_local):
         """
         Matrix-vector product for GMRES
+
+        Assumes no walls and no viscosity difference between vesicle and surrounding fluid
         """
+        Xn_local = Xn[:, self.start : self.end].to(self.device)
         global matvecs
         matvecs += 1
+        if isinstance(Xn_local, np.ndarray):
+            Xn_local = (
+                torch.from_numpy(Xn_local).to(self.device).double()
+            )  # Convert to tensor
+        elif isinstance(Xn_local, cp.ndarray):
+            Xn_local = torch.as_tensor(Xn_local).to(self.device).double()
+        else:
+            Xn_local = Xn_local.to(self.device).double()
 
-        if isinstance(Xn, np.ndarray):
-            Xn = torch.from_numpy(Xn).double()  # Convert to tensor
-        elif isinstance(Xn, cp.ndarray):
-            Xn = torch.as_tensor(Xn).double()
-
-        walls = self.Xwalls
         op = self.op
         N = vesicle.N
-        nv = vesicle.nv
 
-        device = Xn.device  # Use same device as input
-        dtype = Xn.dtype
+        device = Xn_local.device  # Use same device as input
+        dtype = Xn_local.dtype
 
-        Nbd = walls.N if self.confined else 0
-        nvbd = walls.nv if self.confined else 0
+        valPos_local = torch.zeros((2 * N, self.chunk), dtype=dtype, device=device)
 
-        valPos = torch.zeros((2 * N, nv), dtype=dtype, device=device)
-        # valTen = torch.zeros((N, nv), dtype=dtype, device=device)
-        valWalls = (
-            torch.zeros((2 * Nbd, nvbd), dtype=dtype, device=device)
-            if self.confined
-            else None
+        Xn_reshaped_local = Xn_local.view(self.chunk, 3, N)  # [nv, 3, N]
+        Xm_local = (
+            Xn_reshaped_local[:, 0:2, :]
+            .reshape(self.chunk, 2 * N)
+            .transpose(0, 1)
+            .clone()
         )
-        valLets = (
-            torch.zeros((3 * (nvbd - 1),), dtype=dtype, device=device)
-            if self.confined
-            else None
-        )
+        sigmaM_local = Xn_reshaped_local[:, 2, :].T.clone()
 
-        # Xm = torch.zeros((2 * N, nv), dtype=dtype, device=device)
-        # sigmaM = torch.zeros((N, nv), dtype=dtype, device=device)
-        # for k in range(nv):
-        #     Xm[:, k] = Xn[(3 * k) * N : (3 * k + 2) * N]
-        #     sigmaM[:, k] = Xn[(3 * k + 2) * N : (3 * k + 3) * N]
+        f_local = vesicle_local.tracJump(Xm_local, sigmaM_local)
+        alpha = (1 + vesicle_local.viscCont) / 2
 
-        Xn_reshaped = Xn.view(nv, 3, N)  # [nv, 3, N]
-        Xm = Xn_reshaped[:, 0:2, :].reshape(nv, 2 * N).transpose(0, 1).clone()
-        sigmaM = Xn_reshaped[:, 2, :].T.clone()
-
-        if self.confined:
-            eta = Xn[3 * nv * N :]
-            etaM = torch.zeros((2 * Nbd, nvbd), dtype=dtype, device=device)
-            for k in range(nvbd):
-                etaM[:, k] = eta[k * 2 * Nbd : (k + 1) * 2 * Nbd]
-            otlets = eta[2 * Nbd * nvbd :]
-        else:
-            etaM = None
-            otlets = None
-
-        f = vesicle.tracJump(Xm, sigmaM)
-        alpha = (1 + vesicle.viscCont) / 2
-
-        Gf = op.exactStokesSLdiag(vesicle, self.Galpert, f)
-        DXm = (
-            op.exactStokesDLdiag(vesicle, self.D, Xm)
-            if torch.any(vesicle.viscCont != 1)
-            else None
-        )
+        Gf_local = op.exactStokesSLdiag(vesicle_local, self.Galpert_local, f_local)
+        Galpert_gather = [
+            torch.zeros_like(self.Galpert_local) for _ in range(self.size)
+        ]
+        dist.all_gather(Galpert_gather, self.Galpert_local)
+        self.Galpert = torch.cat(Galpert_gather, dim=2)
 
         SLP = lambda X: op.exactStokesSLdiag(vesicle, self.Galpert, X)
-        # Fslp = op.nearSingInt(vesicle, f, SLP, self.NearV2V, op.exactStokesSL, vesicle, True)
-        # Fslp, near = op.nearSingInt_hh(vesicle, f, SLP, self.NearV2V, wrapper_allExactStokesSLTarget_compare2, vesicle, True)
-        Fslp = op.nearSingInt_rbf(
+        f_gather = [torch.zeros_like(f_local) for _ in range(self.size)]
+        dist.all_gather(f_gather, f_local)
+        f = torch.cat(f_gather, dim=1)
+
+        Fslp_local = op.dist_nearSingInt_rbf(
             vesicle,
             f,
             SLP,
             self.NearV2V,
             wrapper_allExactStokesSLTarget_compare2,
-            vesicle,
+            vesicle_local,
             True,
-        )
-        FSLPwall = (
-            op.nearSingInt(
-                vesicle, f, SLP, self.NearV2W, op.exactStokesSL, walls, False
-            )
-            if self.confined
-            else None
+            self.start,
+            self.end,
         )
 
-        Fdlp, FDLPwall = None, None
-        if torch.any(vesicle.viscCont != 1):
-            jump = 0.5 * (1 - vesicle.viscCont)
-            DLP = lambda X: X @ torch.diag(jump) + op.exactStokesDLdiag(
-                vesicle, self.D, X
-            )
-            Fdlp = op.nearSingInt(
-                vesicle, Xm, DLP, self.NearV2V, op.exactStokesDL, vesicle, True
-            )
-            if self.confined:
-                FDLPwall = op.nearSingInt(
-                    vesicle, Xm, DLP, self.NearV2W, op.exactStokesDL, walls, False
-                )
+        valPos_local -= self.dt * Gf_local / alpha
+        valPos_local -= self.dt * Fslp_local / alpha
 
-        Fwall2Ves = (
-            torch.zeros((2 * N, nv), dtype=dtype, device=device)
-            if self.confined
-            else None
-        )
-        FDLPwall2wall = None
-        if self.confined:
-            potWall = self.opWall
-            jump = -0.5
-            DLP = lambda X: jump * X + potWall.exactStokesDLdiag(walls, self.wallDLP, X)
-            Fwall2Ves = potWall.nearSingInt(
-                walls, etaM, DLP, self.NearW2V, potWall.exactStokesDL, vesicle, False
-            )
-
-            if nvbd > 1:
-                if self.matFreeWalls:
-                    FDLPwall2wall = potWall.exactStokesDL(walls, etaM, None)
-                else:
-                    wallAllRHS = self.wallDLPandRSmat @ eta
-                    FDLPwall2wall = wallAllRHS[: 2 * Nbd * nvbd]
-                    valLets = wallAllRHS[2 * Nbd * nvbd :]
-            elif nvbd == 1 and not self.matFreeWalls:
-                wallAllRHS = self.wallDLPandRSmat @ eta
-                valWalls = wallAllRHS[: 2 * Nbd * nvbd]
-
-        LetsWalls = (
-            torch.zeros((2 * Nbd, nvbd), dtype=dtype, device=device)
-            if self.confined and self.matFreeWalls
-            else None
-        )
-        LetsVes = (
-            torch.zeros((2 * N, nv), dtype=dtype, device=device)
-            if self.confined
-            else None
-        )
-        if self.confined and nvbd > 1:
-            for k in range(1, nvbd):
-                stokeslet = otlets[3 * (k - 1) : 3 * (k - 1) + 2]
-                rotlet = otlets[3 * k - 1]
-                LetsVes += self.RSlets(vesicle.X, walls.center[:, k], stokeslet, rotlet)
-                if self.matFreeWalls:
-                    LetsWalls += self.RSlets(
-                        walls.X, walls.center[:, k], stokeslet, rotlet
-                    )
-
-            if self.matFreeWalls:
-                valLets = self.letsIntegrals(otlets, etaM)
-
-        valPos -= self.dt * Gf / alpha
-        if DXm is not None:
-            valPos -= DXm / alpha
-
-        valPos -= self.dt * Fslp / alpha
-
-        if Fdlp is not None:
-            valPos -= Fdlp / alpha
-        if self.confined:
-            valPos -= self.dt * Fwall2Ves / alpha
-            if LetsVes is not None:
-                valPos -= self.dt * LetsVes / alpha
-
-        if self.confined and self.matFreeWalls:
-            potWall = self.opWall
-            valWalls -= 0.5 * etaM
-            valWalls += potWall.exactStokesDLdiag(walls, self.wallDLP, etaM)
-            valWalls[:, 0] += potWall.exactStokesN0diag(walls, self.wallN0, etaM[:, 0])
-
-        if self.confined:
-            if FSLPwall is not None:
-                valWalls += FSLPwall
-            if FDLPwall is not None:
-                valWalls += FDLPwall / self.dt
-            if self.matFreeWalls:
-                if FDLPwall2wall is not None:
-                    valWalls += FDLPwall2wall
-                if LetsWalls is not None:
-                    valWalls += LetsWalls
-            else:
-                if FDLPwall2wall is not None:
-                    valWalls = valWalls.view(-1) + FDLPwall2wall
-
-        valTen = vesicle.surfaceDiv(Xm)
-        valPos += Xm
+        valTen = vesicle_local.surfaceDiv(Xm_local)
+        valPos_local += Xm_local
 
         val_reshaped = torch.cat(
-            [valPos.reshape(2, N, nv), valTen.reshape(1, N, nv)], dim=0
-        ).reshape(3 * N, nv)
+            [valPos_local.reshape(2, N, self.chunk), valTen.reshape(1, N, self.chunk)],
+            dim=0,
+        ).reshape(3 * N, self.chunk)
         val = val_reshaped.permute(1, 0).reshape(-1)
 
-        if self.confined and torch.any(vesicle.viscCont != 1):
-            valWalls *= self.dt
+        val_gather = [torch.zeros_like(val) for _ in range(self.size)]
+        dist.all_gather(val_gather, val)
+        val_global = torch.cat(val_gather, dim=0)
 
-        if self.confined:
-            val = torch.cat([val, valWalls.view(-1), valLets])
-
-        return cp.asarray(val) if torch.cuda.is_available() else np.asarray(val)
+        return (
+            cp.asarray(val_global)
+            if torch.cuda.is_available()
+            else np.asarray(val_global)
+        )
 
     def RSlets(X, center, stokeslet, rotlet):
         """
@@ -733,11 +529,6 @@ class TStepBiem:
             o.bdiagVes["LU"], o.bdiagVes["pivots"], zves_batched
         )
         valVes = valVes_batched.squeeze(-1).reshape(-1)
-
-        # Wall part
-        if o.confined:
-            zwalls = z[3 * N * nv :]
-            valWalls = o.bdiagWall @ zwalls  # Matrix-vector product (or apply operator)
 
         # Combine and return
         val = torch.cat([valVes, valWalls], dim=0) if o.confined else valVes
@@ -1003,4 +794,3 @@ class TStepBiem:
         # Scale the velocity
         vInf *= speed
         return vInf
-

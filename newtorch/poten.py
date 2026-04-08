@@ -7,14 +7,20 @@ from tools.filter import interpft_vec
 import torch
 import torch.fft
 import math
+
 torch.set_default_dtype(torch.float32)
-from biem_support import  exactStokesSL_, exactStokesSL_onlyself, exactStokesSL_onlyself_old
+from biem_support import (
+    exactStokesSL_,
+    exactStokesSL_onlyself,
+    exactStokesSL_onlyself_old,
+)
+
 
 class Poten:
     def __init__(self, N):
         """
         Constructor for the Poten class.
-        
+
         Parameters:
         N : int
             Number of points per curve.
@@ -26,15 +32,16 @@ class Poten:
         self.qw, self.qp, self.Rbac, self.Rfor = self.singQuadStokesSLmatrix(self.Nup)
 
         # Compute quadrature size
-        self.Nquad = self.qw.numel()    
+        self.Nquad = self.qw.numel()
 
         # Expand qw to match the upsampled grid
-        self.qw = self.qw.unsqueeze(1).repeat(1, self.Nup)  # Equivalent to MATLAB: o.qw(:, ones(o.Nup,1));
+        self.qw = self.qw.unsqueeze(1).repeat(
+            1, self.Nup
+        )  # Equivalent to MATLAB: o.qw(:, ones(o.Nup,1));
 
         self.interpMat = self.lagrange_interp()
         # Compute restriction and prolongation matrices
         self.Restrict_LP, self.Prolong_LP = fft1.fourierRandP(self.N, self.Nup)
-
 
     def stokesSLmatrix(self, vesicle):
         # Creating vesicleUp (similar to MATLAB's capsules_py function)
@@ -42,62 +49,100 @@ class Poten:
         vesicleUp = capsules(interpft_vec(vesicle.X, self.Nup), None, None, 1, 1)
 
         # Extract Jacobian
-        sa = vesicleUp.sa[None, :].expand(vesicleUp.N, -1, -1) # (vesicleUp.N, vesicleUp.N, vesicle.nv)
+        sa = vesicleUp.sa[None, :].expand(
+            vesicleUp.N, -1, -1
+        )  # (vesicleUp.N, vesicleUp.N, vesicle.nv)
         sa = sa.float()
 
-        x, y = vesicleUp.X[:self.Nup, :], vesicleUp.X[self.Nup:, :]
+        x, y = vesicleUp.X[: self.Nup, :], vesicleUp.X[self.Nup :, :]
 
         # Compute target points
-        xtar = x[None, :] #.repeat(self.Nquad, 1, 1) # (self.Nquad, self.Nup, vesicle.nv)
-        ytar = y[None, :] #.repeat(self.Nquad, 1, 1)
+        xtar = x[
+            None, :
+        ]  # .repeat(self.Nquad, 1, 1) # (self.Nquad, self.Nup, vesicle.nv)
+        ytar = y[None, :]  # .repeat(self.Nquad, 1, 1)
 
         # Compute source points
-        xsou = x[None, :] #.repeat(vesicleUp.N, 1, 1) # (self.Nup, self.Nup, vesicle.nv)
-        ysou = y[None, :] #.repeat(vesicleUp.N, 1, 1)
+        xsou = x[
+            None, :
+        ]  # .repeat(vesicleUp.N, 1, 1) # (self.Nup, self.Nup, vesicle.nv)
+        ysou = y[None, :]  # .repeat(vesicleUp.N, 1, 1)
 
         # Apply circular shift using self.Rfor
-        xsou = xsou.reshape(-1, vesicle.nv)[self.Rfor % self.Nup].reshape(self.Nup, self.Nup, vesicle.nv)
-        diffx = xtar.permute(2,0,1) - torch.matmul(self.qp[None, :], xsou.permute(2, 0, 1))
+        xsou = xsou.reshape(-1, vesicle.nv)[self.Rfor % self.Nup].reshape(
+            self.Nup, self.Nup, vesicle.nv
+        )
+        diffx = xtar.permute(2, 0, 1) - torch.matmul(
+            self.qp[None, :], xsou.permute(2, 0, 1)
+        )
         del xsou
         torch.cuda.empty_cache()
 
-        ysou = ysou.reshape(-1, vesicle.nv)[self.Rfor % self.Nup].reshape(self.Nup, self.Nup, vesicle.nv)
-        diffy = ytar.permute(2,0,1) - torch.matmul(self.qp[None, :], ysou.permute(2, 0, 1))
+        ysou = ysou.reshape(-1, vesicle.nv)[self.Rfor % self.Nup].reshape(
+            self.Nup, self.Nup, vesicle.nv
+        )
+        diffy = ytar.permute(2, 0, 1) - torch.matmul(
+            self.qp[None, :], ysou.permute(2, 0, 1)
+        )
         del ysou
         torch.cuda.empty_cache()
 
         # print(diffx.shape)
         # rho2 = 1./(diffx ** 2 + diffy ** 2)
-        rho2 = 1./(diffx ** 2 + diffy ** 2 + 1e-7)
+        rho2 = 1.0 / (diffx**2 + diffy**2 + 1e-7)
 
         # print(f" max element in rho2 in Galpert :{torch.max(rho2)}")
         # Compute log-part contribution
-        logpart = 0.5 * torch.matmul(self.qp.T[None, :], (self.qw.unsqueeze(0) * torch.log(rho2)))
+        logpart = 0.5 * torch.matmul(
+            self.qp.T[None, :], (self.qw.unsqueeze(0) * torch.log(rho2))
+        )
 
         if torch.any(torch.isnan(logpart)) or torch.any(torch.isinf(logpart)):
             raise ValueError("NaN or Inf in the logpart")
-        
 
         # Compute G-matrix components
-        G11 = (logpart + torch.matmul(self.qp.T[None, :], self.qw[None, :] * diffx ** 2 * rho2)).permute(0, 2, 1).reshape(vesicle.nv, -1)[:, self.Rbac]
-        G11 = G11.permute(0, 2, 1) * sa.permute(2,0,1)
-        G22 = (logpart + torch.matmul(self.qp.T[None, :], self.qw[None, :] * diffy ** 2 * rho2)).permute(0, 2, 1).reshape(vesicle.nv, -1)[:, self.Rbac]
-        G22 = G22.permute(0, 2, 1) * sa.permute(2,0,1)
-        G12 = (torch.matmul(self.qp.T[None, :], self.qw[None, :] * diffy * diffx * rho2)).permute(0, 2, 1).reshape(vesicle.nv, -1)[:, self.Rbac]
-        G12 = G12.permute(0, 2, 1) * sa.permute(2,0,1)
+        G11 = (
+            (
+                logpart
+                + torch.matmul(self.qp.T[None, :], self.qw[None, :] * diffx**2 * rho2)
+            )
+            .permute(0, 2, 1)
+            .reshape(vesicle.nv, -1)[:, self.Rbac]
+        )
+        G11 = G11.permute(0, 2, 1) * sa.permute(2, 0, 1)
+        G22 = (
+            (
+                logpart
+                + torch.matmul(self.qp.T[None, :], self.qw[None, :] * diffy**2 * rho2)
+            )
+            .permute(0, 2, 1)
+            .reshape(vesicle.nv, -1)[:, self.Rbac]
+        )
+        G22 = G22.permute(0, 2, 1) * sa.permute(2, 0, 1)
+        G12 = (
+            (torch.matmul(self.qp.T[None, :], self.qw[None, :] * diffy * diffx * rho2))
+            .permute(0, 2, 1)
+            .reshape(vesicle.nv, -1)[:, self.Rbac]
+        )
+        G12 = G12.permute(0, 2, 1) * sa.permute(2, 0, 1)
         # G12 = (torch.matmul(self.qp.T, self.qw * diffx * diffy * rho2))[self.Rbac].T * sa
 
         # Initializing G tensor
         G = torch.zeros(vesicle.nv, 2 * vesicle.N, 2 * vesicle.N)
         # Populate G tensor
-        G[:, :self.N, :self.N] = torch.matmul(self.Restrict_LP[None, :], torch.matmul(G11, self.Prolong_LP[None, :]))
-        G[:, :self.N, self.N:] = torch.matmul(self.Restrict_LP[None, :], torch.matmul(G12, self.Prolong_LP[None, :]))
-        G[:, self.N:, :self.N] = G[:, :self.N, self.N:]
-        G[:, self.N:, self.N:] = torch.matmul(self.Restrict_LP[None, :], torch.matmul(G22, self.Prolong_LP[None, :]))
+        G[:, : self.N, : self.N] = torch.matmul(
+            self.Restrict_LP[None, :], torch.matmul(G11, self.Prolong_LP[None, :])
+        )
+        G[:, : self.N, self.N :] = torch.matmul(
+            self.Restrict_LP[None, :], torch.matmul(G12, self.Prolong_LP[None, :])
+        )
+        G[:, self.N :, : self.N] = G[:, : self.N, self.N :]
+        G[:, self.N :, self.N :] = torch.matmul(
+            self.Restrict_LP[None, :], torch.matmul(G22, self.Prolong_LP[None, :])
+        )
 
         # print("end of Galpert")
-        return G.permute(1,2,0)
-
+        return G.permute(1, 2, 0)
 
     def stokesDLmatrix(self, vesicle):
         """
@@ -110,9 +155,11 @@ class Poten:
         """
         # Upsample vesicle positions
         Xup = interpft_vec(vesicle.X, self.Nup)
-        
+
         # Create an upsampled vesicle object
-        vesicleUp = capsules(Xup, None, None, 1, torch.ones(vesicle.nv, device=Xup.device))
+        vesicleUp = capsules(
+            Xup, None, None, 1, torch.ones(vesicle.nv, device=Xup.device)
+        )
 
         # Initialize D matrix
         D = torch.zeros((2 * vesicle.N, 2 * vesicle.N, vesicle.nv), device=Xup.device)
@@ -123,8 +170,11 @@ class Poten:
             const_coeff = -(1 - vesicle.viscCont[valid_idx]).unsqueeze(0).unsqueeze(0)
 
             # Extract locations and tangent vectors
-            xx, yy = Xup[:self.Nup, valid_idx], Xup[self.Nup:, valid_idx]
-            tx, ty = vesicleUp.xt[:self.Nup, valid_idx], vesicleUp.xt[self.Nup:, valid_idx]
+            xx, yy = Xup[: self.Nup, valid_idx], Xup[self.Nup :, valid_idx]
+            tx, ty = (
+                vesicleUp.xt[: self.Nup, valid_idx],
+                vesicleUp.xt[self.Nup :, valid_idx],
+            )
             sa = vesicleUp.sa[:, valid_idx]
             cur = vesicleUp.cur[:, valid_idx]
 
@@ -137,7 +187,7 @@ class Poten:
             # Compute differences
             diffx, diffy = xtar - xsou, ytar - ysou
             rho4 = (diffx**2 + diffy**2).pow(-2)
-            rho4[ids, ids] = 0.  # Set diagonal terms to 0
+            rho4[ids, ids] = 0.0  # Set diagonal terms to 0
 
             # Compute kernel
             kernel = (diffx * tysou - diffy * txsou) * rho4 * sa.unsqueeze(0)
@@ -154,23 +204,26 @@ class Poten:
             # D11.diagonal(dim1=-2, dim2=-1).copy_(diag_terms[0])
             # D12.diagonal(dim1=-2, dim2=-1).copy_(diag_terms[1])
             # D22.diagonal(dim1=-2, dim2=-1).copy_(diag_terms[2])
-            D11[ids, ids] = factor * txsou.squeeze(0)**2
+            D11[ids, ids] = factor * txsou.squeeze(0) ** 2
             D12[ids, ids] = factor * (txsou * tysou).squeeze(0)
-            D22[ids, ids] = factor * tysou.squeeze(0)**2
+            D22[ids, ids] = factor * tysou.squeeze(0) ** 2
 
             # Apply restriction and prolongation operators
-            D11 = self.Restrict_LP @ D11.permute(2,0,1) @ self.Prolong_LP # after this, batch dim is 0-th dim
-            D12 = self.Restrict_LP @ D12.permute(2,0,1) @ self.Prolong_LP
-            D22 = self.Restrict_LP @ D22.permute(2,0,1) @ self.Prolong_LP
+            D11 = (
+                self.Restrict_LP @ D11.permute(2, 0, 1) @ self.Prolong_LP
+            )  # after this, batch dim is 0-th dim
+            D12 = self.Restrict_LP @ D12.permute(2, 0, 1) @ self.Prolong_LP
+            D22 = self.Restrict_LP @ D22.permute(2, 0, 1) @ self.Prolong_LP
 
             # Assemble full D matrix
-            D_full = torch.cat([
-                torch.cat([D11, D12], dim=-1),
-                torch.cat([D12, D22], dim=-1)
-            ], dim=-2)
+            D_full = torch.cat(
+                [torch.cat([D11, D12], dim=-1), torch.cat([D12, D22], dim=-1)], dim=-2
+            )
 
             # Scale with arc-length spacing and divide by pi
-            D[:, :, valid_idx] = (1 / torch.pi) * D_full.permute(1,2,0) * (2 * torch.pi / vesicleUp.N)
+            D[:, :, valid_idx] = (
+                (1 / torch.pi) * D_full.permute(1, 2, 0) * (2 * torch.pi / vesicleUp.N)
+            )
 
         return D
 
@@ -189,20 +242,24 @@ class Poten:
         """
 
         # Compute normal vectors
-        normal = torch.cat((vesicle.xt[vesicle.N:2 * vesicle.N, 0],
-                            -vesicle.xt[:vesicle.N, 0]), dim=0).to(vesicle.X.device)
+        normal = torch.cat(
+            (vesicle.xt[vesicle.N : 2 * vesicle.N, 0], -vesicle.xt[: vesicle.N, 0]),
+            dim=0,
+        ).to(vesicle.X.device)
 
         # Expand normal vectors along the second axis
-        normal = normal[:, None].expand(-1, 2*vesicle.N)
+        normal = normal[:, None].expand(-1, 2 * vesicle.N)
 
         # Arclength elements
         # sa = vesicle.sa[:, 0].repeat(2)  # Duplicate first column for both components
         # sa = sa[:, None].repeat(1, 2 * vesicle.N)  # Expand along second axis
         sa = torch.cat((vesicle.sa[:, 0], vesicle.sa[:, 0]), dim=0).to(vesicle.X.device)
-        sa = sa[:, None].expand(-1, 2 *vesicle.N)
+        sa = sa[:, None].expand(-1, 2 * vesicle.N)
 
         # Compute the N0 matrix using element-wise operations
-        N0 = torch.zeros((2*vesicle.N, 2*vesicle.N, vesicle.nv), device=vesicle.X.device)
+        N0 = torch.zeros(
+            (2 * vesicle.N, 2 * vesicle.N, vesicle.nv), device=vesicle.X.device
+        )
         N0[:, :, 0] = normal * normal.T * sa.T * (2 * torch.pi / vesicle.N)
 
         # # If multiple vesicles are present, expand dimensions
@@ -219,25 +276,27 @@ class Poten:
         SLP - Tensor of shape (2*N, nv), representing the computed single-layer potential.
         """
         # Compute SLP using batch matrix-vector multiplication
-        SLP = torch.einsum('ijk,jk->ik', G, f)  # Equivalent to multiplying G(:,:,k) by f(:,k) for each k
+        SLP = torch.einsum(
+            "ijk,jk->ik", G, f
+        )  # Equivalent to multiplying G(:,:,k) by f(:,k) for each k
 
         return SLP
-    
 
     def exactStokesDLdiag(self, vesicle, D, f):
         """
         Computes the diagonal term of the double-layer potential due to `f` around all vesicles.
-        The source and target points are the same. This uses the trapezoid rule with the 
+        The source and target points are the same. This uses the trapezoid rule with the
         curvature at the diagonal to guarantee spectral accuracy.
 
         Returns:
         DLP - Tensor of shape (2*N, nv), representing the computed double-layer potential.
         """
         # Compute DLP using batch matrix-vector multiplication
-        DLP = torch.einsum('ijk,jk->ik', D, f)  # Equivalent to multiplying D(:,:,k) by f(:,k) for each k
+        DLP = torch.einsum(
+            "ijk,jk->ik", D, f
+        )  # Equivalent to multiplying D(:,:,k) by f(:,k) for each k
 
         return DLP
-
 
     def exactStokesN0diag(self, vesicle, N0, f):
         """
@@ -267,20 +326,20 @@ class Poten:
             N0 = torch.matmul(N0[:, :, 0], f[:, 0])  # Compute modified potential
 
         return N0
-    
+
     # % END OF ROUTINES THAT EVALUATE LAYER-POTENTIALS
     # % WHEN SOURCES == TARGETS
 
     # % START OF ROUTINES THAT EVALUATE LAYER-POTENTIALS
     # % WHEN SOURCES ~= TARGETS.  CAN COMPUTE LAYER POTENTIAL ON EACH
     # % VESICLE DUE TO ALL OTHER VESICLES (ex. stokesSLP) AND CAN
-    # % COMPUTE LAYER POTENTIAL DUE TO VESICLES INDEXED IN K1 AT 
+    # % COMPUTE LAYER POTENTIAL DUE TO VESICLES INDEXED IN K1 AT
     # % TARGET POINTS Xtar
 
     def exactStokesSL(self, vesicle, f, Xtar=None, K1=None):
         """
         Computes the single-layer potential due to `f` around all vesicles except itself.
-        Also can pass a set of target points `Xtar` and a collection of vesicles `K1` 
+        Also can pass a set of target points `Xtar` and a collection of vesicles `K1`
         and the single-layer potential due to vesicles in `K1` will be evaluated at `Xtar`.
 
         Parameters:
@@ -292,23 +351,23 @@ class Poten:
         Returns:
         - stokesSLPtar: Single-layer potential at target points.
         """
-        
-        
+
         Ntar = Xtar.shape[0] // 2
         ncol = Xtar.shape[1]
-        stokesSLPtar = torch.zeros((2 * Ntar, ncol), dtype=torch.float32, device=vesicle.X.device)
-        
+        stokesSLPtar = torch.zeros(
+            (2 * Ntar, ncol), dtype=torch.float32, device=vesicle.X.device
+        )
 
         den = f * torch.tile(vesicle.sa, (2, 1)) * 2 * torch.pi / vesicle.N
 
-        xsou = vesicle.X[:vesicle.N, K1].flatten()
-        ysou = vesicle.X[vesicle.N:, K1].flatten()
-        xsou = torch.tile(xsou, (Ntar, 1)).T    # (N*(nv-1), Ntar)
+        xsou = vesicle.X[: vesicle.N, K1].flatten()
+        ysou = vesicle.X[vesicle.N :, K1].flatten()
+        xsou = torch.tile(xsou, (Ntar, 1)).T  # (N*(nv-1), Ntar)
         ysou = torch.tile(ysou, (Ntar, 1)).T
 
-        denx = den[:vesicle.N, K1].flatten()
-        deny = den[vesicle.N:, K1].flatten()
-        denx = torch.tile(denx, (Ntar, 1)).T    # (N*(nv-1), Ntar)
+        denx = den[: vesicle.N, K1].flatten()
+        deny = den[vesicle.N :, K1].flatten()
+        denx = torch.tile(denx, (Ntar, 1)).T  # (N*(nv-1), Ntar)
         deny = torch.tile(deny, (Ntar, 1)).T
 
         for k in range(ncol):  # Loop over columns of target points
@@ -318,7 +377,7 @@ class Poten:
             ytar = Xtar[Ntar:, k]
             xtar = torch.tile(xtar, (vesicle.N * len(K1), 1))
             ytar = torch.tile(ytar, (vesicle.N * len(K1), 1))
-            
+
             diffx = xtar - xsou
             diffy = ytar - ysou
 
@@ -332,9 +391,7 @@ class Poten:
             stokesSLPtar[:Ntar, k] += torch.sum(coeff * diffx, dim=0)
             stokesSLPtar[Ntar:, k] += torch.sum(coeff * diffy, dim=0)
 
-
         return stokesSLPtar / (4 * torch.pi)
-
 
     def exactLaplaceDL(self, vesicle, f, Xtar, K1):
         """
@@ -344,8 +401,8 @@ class Poten:
         """
 
         # Normal vectors
-        nx = vesicle.xt[vesicle.N:2 * vesicle.N, :]
-        ny = -vesicle.xt[:vesicle.N, :]
+        nx = vesicle.xt[vesicle.N : 2 * vesicle.N, :]
+        ny = -vesicle.xt[: vesicle.N, :]
 
         # Target dimensions
         N = vesicle.N
@@ -356,7 +413,9 @@ class Poten:
         laplaceDLPtar = torch.zeros((2 * Ntar, ncol), dtype=torch.float32)
 
         # Multiply by arclength term
-        den = f * torch.cat((vesicle.sa, vesicle.sa), dim=0) * (2 * torch.pi / vesicle.N)
+        den = (
+            f * torch.cat((vesicle.sa, vesicle.sa), dim=0) * (2 * torch.pi / vesicle.N)
+        )
 
         # Source coordinates
         xsou, ysou = vesicle.X[:N, K1], vesicle.X[N:, K1]
@@ -392,7 +451,7 @@ class Poten:
             laplaceDLPtar[Ntar:, k2] = torch.sum(coeff * deny, dim=1)
 
         # Multiply by coefficient in front of the double-layer potential
-        laplaceDLPtar /= (2 * torch.pi)
+        laplaceDLPtar /= 2 * torch.pi
 
         return laplaceDLPtar
 
@@ -403,15 +462,27 @@ class Poten:
 
         """
         # Compute normal vectors
-        normal = torch.cat((vesicle.xt[vesicle.N:2 * vesicle.N, :], 
-                            -vesicle.xt[:vesicle.N, :]), dim=0)
-        
+        normal = torch.cat(
+            (vesicle.xt[vesicle.N : 2 * vesicle.N, :], -vesicle.xt[: vesicle.N, :]),
+            dim=0,
+        )
+
         Ntar = Xtar.shape[0] // 2
         ncol = Xtar.shape[1]
-        stokesDLPtar = torch.zeros((2 * Ntar, ncol), dtype=torch.float32, device=vesicle.X.device)
+        stokesDLPtar = torch.zeros(
+            (2 * Ntar, ncol), dtype=torch.float32, device=vesicle.X.device
+        )
 
         # Compute density function with jacobian term and viscosity contrast scaling
-        den = (f * torch.cat((vesicle.sa, vesicle.sa), dim=0) * (2 * torch.pi / vesicle.N)) @ torch.eye(vesicle.nv) * (1 - vesicle.viscCont)
+        den = (
+            (
+                f
+                * torch.cat((vesicle.sa, vesicle.sa), dim=0)
+                * (2 * torch.pi / vesicle.N)
+            )
+            @ torch.eye(vesicle.nv)
+            * (1 - vesicle.viscCont)
+        )
 
         oc = Curve()
 
@@ -442,7 +513,9 @@ class Poten:
             dis2 = diffx**2 + diffy**2
 
             # Compute rdotnTIMESrdotf term
-            rdotnTIMESrdotf = ((diffx * normalx + diffy * normaly) / dis2**2) * (diffx * denx + diffy * deny)
+            rdotnTIMESrdotf = ((diffx * normalx + diffy * normaly) / dis2**2) * (
+                diffx * denx + diffy * deny
+            )
 
             # Compute the potential
             stokesDLPtar[:Ntar, k] += torch.sum(rdotnTIMESrdotf * diffx, dim=1)
@@ -462,7 +535,17 @@ class Poten:
         """
         return tensor
 
-    def nearSingInt_hh(self, vesicleSou, f, selfMat, NearV2V, kernelDirect, vesicleTar, tEqualS):
+    def nearSingInt_hh(
+        self,
+        vesicleSou,
+        f,
+        selfMat,
+        NearV2V,
+        kernelDirect,
+        vesicleTar,
+        tEqualS,
+        targets,
+    ):
         """
         Computes a layer potential due to `f` at all points in `vesicleTar.X`.
 
@@ -488,8 +571,16 @@ class Poten:
         # Extract data from NearStruct
         # dist, zone, nearest, icp, argnear = NearStruct.dist, NearStruct.zone, NearStruct.nearest, NearStruct.icp, NearStruct.argnear
 
-        Xsou, Nsou, nvSou = vesicleSou.X, vesicleSou.X.shape[0] // 2, vesicleSou.X.shape[1]
-        Xtar, Ntar, nvTar = vesicleTar.X, vesicleTar.X.shape[0] // 2, vesicleTar.X.shape[1]
+        Xsou, Nsou, nvSou = (
+            vesicleSou.X,
+            vesicleSou.X.shape[0] // 2,
+            vesicleSou.X.shape[1],
+        )
+        Xtar, Ntar, nvTar = (
+            vesicleTar.X,
+            vesicleTar.X.shape[0] // 2,
+            vesicleTar.X.shape[1],
+        )
         h = vesicleSou.length / Nsou  # Arc length
 
         # Upsample sources
@@ -515,7 +606,9 @@ class Poten:
         # elif not tEqualS:
         #     farField = kernelDirect(vesicleUp.X, vesicleUp.sa, fup, Xtar, torch.arange(nvSou))
         else:
-            farField = torch.zeros((2 * Ntar, nvTar), dtype=torch.float32, device=device)
+            farField = torch.zeros(
+                (2 * Ntar, nvTar), dtype=torch.float32, device=device
+            )
 
         # Initialize nearField
         nearField = torch.zeros((2 * Ntar, nvTar), dtype=torch.float32, device=device)
@@ -530,27 +623,34 @@ class Poten:
                 # K = K[K != k1]
             else:
                 K = range(nvTar)
-                
 
-            for k2 in K: # in nvTar
+            for k2 in K:  # in nvTar
                 # J = torch.where(zone[k1][:, k2] == 1)[0]  # set of points on vesicle k2 close to vesicle k1
                 id1, id2 = NearV2V[3]
-                J = id1[(Ntar * k2 <= id1) & (id1 < Ntar * (k2+1)) & (id2 == k1)] % Ntar
+                J = (
+                    id1[(Ntar * k2 <= id1) & (id1 < Ntar * (k2 + 1)) & (id2 == k1)]
+                    % Ntar
+                )
                 if len(J) == 0:
                     continue  # Skip if no near-zone points
 
                 # indcp = icp[k1][J, k2] # closest point on vesicle k1 to each point on vesicle k2 that is close to vesicle k1
                 dist_closest, idx_closest = NearV2V[0][k1, k2, J], NearV2V[1][k1, k2, J]
                 # index of points to the left and right of the closest point
-                pn = ((idx_closest[:, None] - p + 1 + torch.arange(interpOrder)) % Nsou).long() 
+                pn = (
+                    (idx_closest[:, None] - p + 1 + torch.arange(interpOrder)) % Nsou
+                ).long()
 
                 # # vel = torch.zeros((2 * len(J), nvTar, nvSou), dtype=torch.float32, device=device)
-                vel = torch.zeros((2 * Ntar, nvTar, nvSou), dtype=torch.float32, device=device)
+                vel = torch.zeros(
+                    (2 * Ntar, nvTar, nvSou), dtype=torch.float32, device=device
+                )
                 v = self.filter_to_be_implemented(self.interpMat @ vself[pn, k1].T)
-                vel[J, k2, k1]  = v[-1, :]
-                v = self.filter_to_be_implemented(self.interpMat @ vself[pn + Nsou, k1].T)
-                vel[J + Ntar, k2, k1]  = v[-1, :]
-
+                vel[J, k2, k1] = v[-1, :]
+                v = self.filter_to_be_implemented(
+                    self.interpMat @ vself[pn + Nsou, k1].T
+                )
+                vel[J + Ntar, k2, k1] = v[-1, :]
 
                 # Compute Lagrange interpolation points
                 nx = (Xtar[J, k2] - Xsou[idx_closest, k1]) / dist_closest
@@ -559,33 +659,42 @@ class Poten:
 
                 # XLag_x = nearest[k1][J, k2].unsqueeze(1) + beta * h * nx.unsqueeze(1) * torch.arange(1, interpOrder)
                 # XLag_y = nearest[k1][J + Ntar, k2].unsqueeze(1) + beta * h * ny.unsqueeze(1) * torch.arange(1, interpOrder)
-                XLag_x = Xsou[idx_closest, k1].unsqueeze(1) + beta * h * nx.unsqueeze(1) * torch.arange(1, interpOrder)
-                XLag_y = Xsou[idx_closest + Nsou, k1].unsqueeze(1) + beta * h * ny.unsqueeze(1) * torch.arange(1, interpOrder)
+                XLag_x = Xsou[idx_closest, k1].unsqueeze(1) + beta * h * nx.unsqueeze(
+                    1
+                ) * torch.arange(1, interpOrder)
+                XLag_y = Xsou[idx_closest + Nsou, k1].unsqueeze(
+                    1
+                ) + beta * h * ny.unsqueeze(1) * torch.arange(1, interpOrder)
 
                 XLag = torch.cat((XLag_x, XLag_y), dim=0)
 
                 # lagrangePts = kernelDirect(vesicleUp, fup, XLag, k1)
                 # lagrangePts, _ = allExactStokesSLTarget_compare1(vesicleUp.X[:, k1], vesicleUp.sa[:, k1], fup, XLag)
                 # print(f"Xlag shape {XLag.shape}")
-                lagrangePts = exactStokesSL_(vesicleUp, fup, XLag, [k1]) # may need optimization
+                lagrangePts = exactStokesSL_(
+                    vesicleUp, fup, XLag, [k1]
+                )  # may need optimization
 
                 num_J = len(J)
 
                 # Get Px and Py all at once
                 Px = torch.bmm(
                     self.interpMat.unsqueeze(0).expand(num_J, -1, -1),  # [num_J, 7, 7]
-                    torch.concat([
-                        vel[J, k2, k1].unsqueeze(-1),                    # [num_J, 1]
-                        lagrangePts[:num_J, :]            # [num_J, interpOrder-1]
-                    ], dim=1).unsqueeze(-1)                              # [num_J, interpOrder]
+                    torch.concat(
+                        [
+                            vel[J, k2, k1].unsqueeze(-1),  # [num_J, 1]
+                            lagrangePts[:num_J, :],  # [num_J, interpOrder-1]
+                        ],
+                        dim=1,
+                    ).unsqueeze(-1),  # [num_J, interpOrder]
                 ).squeeze()  # [num_J, 7, 1] → [num_J, 7]
 
                 Py = torch.bmm(
                     self.interpMat.unsqueeze(0).expand(num_J, -1, -1),
-                    torch.concat([
-                        vel[J + Ntar, k2, k1].unsqueeze(-1), 
-                        lagrangePts[num_J:, :]
-                    ], dim=1).unsqueeze(-1)
+                    torch.concat(
+                        [vel[J + Ntar, k2, k1].unsqueeze(-1), lagrangePts[num_J:, :]],
+                        dim=1,
+                    ).unsqueeze(-1),
                 ).squeeze()
 
                 # Get dscaled values
@@ -594,13 +703,193 @@ class Poten:
                 nearField[J, k2] += Px[:, -1]
                 Py = self.filter_to_be_implemented(Py)
                 nearField[J + Ntar, k2] += Py[:, -1]
-        
+
         # print(nearField)
         return farField + nearField, nearField
 
+    def dist_nearSingInt_rbf(
+        self,
+        vesicleSou,
+        f,
+        selfMat,
+        NearV2V,
+        kernelDirect,
+        vesicleTar,
+        tEqualS,
+        start,
+        end,
+    ):
+        """
+        Computes a layer potential due to `f` at all points in `vesicleTar.X`.
 
+        Parameters:
+        vesicleSou - Source vesicles object
+        f - Density function
+        selfMat - Function computing self-interactions
+        NearStruct - Structure with near-zone data
+        kernelDirect - Function for direct kernel evaluations
+        vesicleTar - Target vesicles object
+        tEqualS - Boolean, true if sources == targets
+        o - Object containing interpolation and upsampling parameters
 
-    def nearSingInt_rbf(self, vesicleSou, f, selfMat, NearV2V, kernelDirect, vesicleTar, tEqualS):
+        Returns:
+        LP - Computed layer potential
+        """
+        # If only a single vesicle exists, return zeros
+        if tEqualS and vesicleSou.X.shape[1] == 1:
+            return torch.zeros_like(vesicleTar.X)
+
+        device = f.device
+
+        Xsou, Nsou, nvSou = (
+            vesicleSou.X,
+            vesicleSou.X.shape[0] // 2,
+            vesicleSou.X.shape[1],
+        )
+
+        Xtar = vesicleTar.X
+        Ntar = Xtar.shape[0] // 2
+        nvTar = Xtar.shape[1]
+
+        # Upsample sources
+        Nup = self.Nup
+        Xup = interpft_vec(Xsou, Nup)  # Upsample source points
+        fup = interpft_vec(f, Nup)  # Upsample density function
+
+        # Compute self-interaction
+        vself = selfMat(f)
+
+        # Upsampled vesicle object
+        vesicleUp = capsules(Xup, None, None, vesicleSou.kappa, vesicleSou.viscCont)
+
+        # interpOrder = self.interpMat.shape[0]
+        # p = (interpOrder + 1) // 2
+
+        if tEqualS and nvSou > 1:
+            # Compute far-field ignoring self-interactions
+            # idx = torch.arange(nvSou)
+            # farField = torch.stack([kernelDirect(vesicleUp, fup, Xtar[:, k], idx[idx != k]) for k in range(nvSou)], dim=1)
+            farField = kernelDirect(vesicleUp.X, vesicleUp.sa, fup, Xtar, NearV2V[-1])
+            # farField = kernelDirect(vesicleUp.X, vesicleUp.sa, fup, Xtar, (torch.tensor([], dtype=torch.int64), torch.tensor([], dtype=torch.int64), torch.tensor([], dtype=torch.int64)))
+        elif not tEqualS:
+            farField = kernelDirect(vesicleUp, fup, Xtar, torch.arange(nvSou))
+        else:
+            farField = torch.zeros(
+                (2 * Ntar, nvTar), dtype=torch.float32, device=device
+            )
+
+        upsample = -1
+        if Nsou == 32:
+            if upsample <= 1:
+                const = 0.672  # * self.len[0].item()
+            elif upsample == 2:
+                const = 0.566
+                vself = interpft_vec(vself, upsample * Nsou)
+            elif upsample == 4:
+                # const = 0.495
+                const = 0.305
+                vself = interpft_vec(vself, upsample * Nsou)
+        else:
+            upsample = -1
+            const = 0.0132
+
+        nlayers = 3
+        Nup_for_layers = (
+            Nsou * (nlayers - 1) * math.ceil(math.sqrt((nlayers - 1) * Nsou))
+        )
+        # Nup_for_layers = Nsou * 2 * math.ceil(math.sqrt(2*Nsou))
+        Xup_layers = interpft_vec(Xsou, Nup_for_layers)  # Upsample source points
+        fup_layers = interpft_vec(f, Nup_for_layers)  # Upsample density function
+        vesicleUp_layers = capsules(
+            Xup_layers, None, None, vesicleSou.kappa, vesicleSou.viscCont
+        )
+
+        # print(f"using nlayers {nlayers} and upsample {upsample}")
+        N = Xsou.shape[0] // 2
+        if upsample > 0:
+            Nup_self = N * upsample  # is different from vesicleUp.N !!
+            Xup_self = interpft_vec(Xsou, Nup_self)  # Upsample source points
+        else:
+            Nup_self = N
+            Xup_self = Xsou
+
+        # vesicleUp = capsules(Xup, None, None, vesicle.kappa, vesicle.viscCont)
+        oc = Curve()
+        dlayer = torch.linspace(
+            0, 1 / N, nlayers, dtype=torch.float32, device=Xsou.device
+        )
+        _, tang = oc.diffProp_jac_tan(Xup)
+        rep_nx = tang[Nup:, :, None].expand(-1, -1, nlayers - 1)
+        rep_ny = -tang[:Nup, :, None].expand(-1, -1, nlayers - 1)
+        dx = (
+            rep_nx * dlayer[[1, 2, 3]] if nlayers == 4 else rep_nx * dlayer[[1, 2]]
+        )  # (N, nv, nlayers-1)
+        dy = rep_ny * dlayer[[1, 2, 3]] if nlayers == 4 else rep_ny * dlayer[[1, 2]]
+        tracers = torch.permute(
+            torch.vstack(
+                [
+                    torch.repeat_interleave(
+                        Xup_self[:Nup_self, :, None], nlayers - 1, dim=-1
+                    )
+                    + dx,
+                    torch.repeat_interleave(
+                        Xup_self[Nup_self:, :, None], nlayers - 1, dim=-1
+                    )
+                    + dy,
+                ]
+            ),
+            (0, 2, 1),
+        )  # (2*N, nlayers-1, nv)
+
+        velx, vely, xlayers, ylayers = exactStokesSL_onlyself(
+            vesicleUp_layers.X,
+            vesicleUp_layers.sa,
+            fup_layers,
+            Nup_self,
+            Xup_self,
+            vself,
+            tracers,
+        )
+
+        all_X = torch.concat(
+            (xlayers.reshape(-1, 1, nvSou), ylayers.reshape(-1, 1, nvSou)), dim=1
+        )  # (nlayers * N, 2, nv), 2 for x and y
+        all_X = all_X / const
+        matrices = torch.exp(
+            -torch.sum((all_X[:, None] - all_X[None, ...]) ** 2, dim=-2)
+        )
+        matrices += (torch.eye(all_X.shape[0]).unsqueeze(-1) * 1e-6).expand(
+            -1, -1, nvSou
+        )  # (nlayers*N, nlayers*N, nv)
+        L = torch.linalg.cholesky(matrices.permute(2, 0, 1))
+
+        self.dist_nearFieldCorrectionUP_SOLVE(
+            vesicleTar,
+            start,
+            end,
+            upsample,
+            NearV2V[2],
+            L,
+            farField,
+            velx,
+            vely,
+            xlayers,
+            ylayers,
+            nlayers=nlayers,
+        )
+
+        return farField
+
+    def nearSingInt_rbf(
+        self,
+        vesicleSou,
+        f,
+        selfMat,
+        NearV2V,
+        kernelDirect,
+        vesicleTar,
+        tEqualS,
+    ):
         """
         Computes a layer potential due to `f` at all points in `vesicleTar.X`.
 
@@ -626,12 +915,20 @@ class Poten:
         # Extract data from NearStruct
         # dist, zone, nearest, icp, argnear = NearStruct.dist, NearStruct.zone, NearStruct.nearest, NearStruct.icp, NearStruct.argnear
 
-        Xsou, Nsou, nvSou = vesicleSou.X, vesicleSou.X.shape[0] // 2, vesicleSou.X.shape[1]
-        Xtar, Ntar, nvTar = vesicleTar.X, vesicleTar.X.shape[0] // 2, vesicleTar.X.shape[1]
+        Xsou, Nsou, nvSou = (
+            vesicleSou.X,
+            vesicleSou.X.shape[0] // 2,
+            vesicleSou.X.shape[1],
+        )
+        Xtar, Ntar, nvTar = (
+            vesicleTar.X,
+            vesicleTar.X.shape[0] // 2,
+            vesicleTar.X.shape[1],
+        )
         # h = vesicleSou.length / Nsou  # Arc length
 
         # Upsample sources
-        Nup = self.Nup 
+        Nup = self.Nup
         Xup = interpft_vec(Xsou, Nup)  # Upsample source points
         fup = interpft_vec(f, Nup)  # Upsample density function
 
@@ -649,16 +946,18 @@ class Poten:
             # idx = torch.arange(nvSou)
             # farField = torch.stack([kernelDirect(vesicleUp, fup, Xtar[:, k], idx[idx != k]) for k in range(nvSou)], dim=1)
             farField = kernelDirect(vesicleUp.X, vesicleUp.sa, fup, Xtar, NearV2V[-1])
-            # farField = kernelDirect(vesicleUp.X, vesicleUp.sa, fup, Xtar, (torch.tensor([], dtype=torch.int64), torch.tensor([], dtype=torch.int64), torch.tensor([], dtype=torch.int64))) 
+            # farField = kernelDirect(vesicleUp.X, vesicleUp.sa, fup, Xtar, (torch.tensor([], dtype=torch.int64), torch.tensor([], dtype=torch.int64), torch.tensor([], dtype=torch.int64)))
         elif not tEqualS:
             farField = kernelDirect(vesicleUp, fup, Xtar, torch.arange(nvSou))
         else:
-            farField = torch.zeros((2 * Ntar, nvTar), dtype=torch.float32, device=device)
+            farField = torch.zeros(
+                (2 * Ntar, nvTar), dtype=torch.float32, device=device
+            )
 
         upsample = -1
         if Nsou == 32:
-            if upsample <=1 :
-                const = 0.672 #* self.len[0].item()
+            if upsample <= 1:
+                const = 0.672  # * self.len[0].item()
             elif upsample == 2:
                 const = 0.566
                 vself = interpft_vec(vself, upsample * Nsou)
@@ -669,18 +968,20 @@ class Poten:
         else:
             upsample = -1
             const = 0.0132
-        
-        nlayers=3
-        Nup_for_layers = Nsou * (nlayers-1) * math.ceil(math.sqrt((nlayers-1)*Nsou))
+
+        nlayers = 3
+        Nup_for_layers = (
+            Nsou * (nlayers - 1) * math.ceil(math.sqrt((nlayers - 1) * Nsou))
+        )
         # Nup_for_layers = Nsou * 2 * math.ceil(math.sqrt(2*Nsou))
         Xup = interpft_vec(Xsou, Nup_for_layers)  # Upsample source points
         fup = interpft_vec(f, Nup_for_layers)  # Upsample density function
         vesicleUp = capsules(Xup, None, None, vesicleSou.kappa, vesicleSou.viscCont)
 
         # print(f"using nlayers {nlayers} and upsample {upsample}")
-        N = Xsou.shape[0]//2
+        N = Xsou.shape[0] // 2
         if upsample > 0:
-            Nup = N * upsample # is different from vesicleUp.N !!
+            Nup = N * upsample  # is different from vesicleUp.N !!
             Xup = interpft_vec(Xsou, Nup)  # Upsample source points
         else:
             Nup = N
@@ -688,142 +989,372 @@ class Poten:
 
         # vesicleUp = capsules(Xup, None, None, vesicle.kappa, vesicle.viscCont)
         oc = Curve()
-        dlayer = torch.linspace(0, 1/N, nlayers, dtype=torch.float32, device=Xsou.device)
+        dlayer = torch.linspace(
+            0, 1 / N, nlayers, dtype=torch.float32, device=Xsou.device
+        )
         _, tang = oc.diffProp_jac_tan(Xup)
-        rep_nx = tang[Nup:, :, None].expand(-1,-1,nlayers-1)
-        rep_ny = -tang[:Nup, :, None].expand(-1,-1,nlayers-1)
-        dx =  rep_nx * dlayer[[1,2,3]] if nlayers == 4 else rep_nx * dlayer[[1,2]] # (N, nv, nlayers-1)
-        dy =  rep_ny * dlayer[[1,2,3]] if nlayers == 4 else rep_ny * dlayer[[1,2]]
+        rep_nx = tang[Nup:, :, None].expand(-1, -1, nlayers - 1)
+        rep_ny = -tang[:Nup, :, None].expand(-1, -1, nlayers - 1)
+        dx = (
+            rep_nx * dlayer[[1, 2, 3]] if nlayers == 4 else rep_nx * dlayer[[1, 2]]
+        )  # (N, nv, nlayers-1)
+        dy = rep_ny * dlayer[[1, 2, 3]] if nlayers == 4 else rep_ny * dlayer[[1, 2]]
         tracers = torch.permute(
-            torch.vstack([torch.repeat_interleave(Xup[:Nup, :, None], nlayers-1, dim=-1) + dx,
-                        torch.repeat_interleave(Xup[Nup:, :, None], nlayers-1, dim=-1) + dy]), (0,2,1)) # (2*N, nlayers-1, nv)
+            torch.vstack(
+                [
+                    torch.repeat_interleave(Xup[:Nup, :, None], nlayers - 1, dim=-1)
+                    + dx,
+                    torch.repeat_interleave(Xup[Nup:, :, None], nlayers - 1, dim=-1)
+                    + dy,
+                ]
+            ),
+            (0, 2, 1),
+        )  # (2*N, nlayers-1, nv)
 
-        velx, vely, xlayers, ylayers = exactStokesSL_onlyself(vesicleUp.X, vesicleUp.sa, fup, Nup, Xup, vself, tracers)
-        
+        velx, vely, xlayers, ylayers = exactStokesSL_onlyself(
+            vesicleUp.X, vesicleUp.sa, fup, Nup, Xup, vself, tracers
+        )
 
-        all_X = torch.concat((xlayers.reshape(-1,1,nvSou), ylayers.reshape(-1,1,nvSou)), dim=1) # (nlayers * N, 2, nv), 2 for x and y
-        all_X = all_X /const
-        matrices = torch.exp(- torch.sum((all_X[:, None] - all_X[None, ...])**2, dim=-2)) 
-        matrices += (torch.eye(all_X.shape[0]).unsqueeze(-1) * 1e-6).expand(-1,-1,nvSou) # (nlayers*N, nlayers*N, nv)
+        all_X = torch.concat(
+            (xlayers.reshape(-1, 1, nvSou), ylayers.reshape(-1, 1, nvSou)), dim=1
+        )  # (nlayers * N, 2, nv), 2 for x and y
+        all_X = all_X / const
+        matrices = torch.exp(
+            -torch.sum((all_X[:, None] - all_X[None, ...]) ** 2, dim=-2)
+        )
+        matrices += (torch.eye(all_X.shape[0]).unsqueeze(-1) * 1e-6).expand(
+            -1, -1, nvSou
+        )  # (nlayers*N, nlayers*N, nv)
         L = torch.linalg.cholesky(matrices.permute(2, 0, 1))
-        
-        self.nearFieldCorrectionUP_SOLVE(vesicleTar, upsample, NearV2V[2], L, farField, velx, vely, xlayers, ylayers, nlayers=nlayers)
 
+        self.nearFieldCorrectionUP_SOLVE(
+            vesicleTar,
+            upsample,
+            NearV2V[2],
+            L,
+            farField,
+            velx,
+            vely,
+            xlayers,
+            ylayers,
+            nlayers=nlayers,
+        )
 
         return farField
 
+    def dist_nearFieldCorrectionUP_SOLVE(
+        self,
+        vesicleTar,
+        tar_start,
+        tar_end,
+        upsample,
+        info,
+        L,
+        far_field,
+        velx,
+        vely,
+        xlayers,
+        ylayers,
+        nlayers,
+    ):
+        """
+        Near-field correction with:
+        - all source vesicles included
+        - only local target vesicles corrected
 
-    def nearFieldCorrectionUP_SOLVE(self, vesicle, upsample, info, L, far_field, velx, vely, xlayers, ylayers, nlayers):
-        if  len(info[0])==0 or len(info[1])==0:
+        Parameters
+        ----------
+        vesicleTar : capsules
+            Local target vesicles only.
+        tar_start, tar_end : int
+            Global target vesicle ids corresponding to columns of vesicleTar.
+        info : tuple
+            Near info in global indexing.
+        L, velx, vely, xlayers, ylayers
+            Source-side data for ALL vesicles.
+        far_field : torch.Tensor
+            Local target output buffer, shape (2*N, tar_end - tar_start).
+        """
+
+        if len(info[0]) == 0 or len(info[1]) == 0:
             return
-        
-        N = vesicle.N
-        nv = vesicle.nv
 
-        all_points = torch.concat((vesicle.X[:N, :].T.reshape(-1,1), vesicle.X[N:, :].T.reshape(-1,1)), dim=1)
-        # correction = torch.zeros((N*nv, 2), dtype=torch.float32, device=trac_jump.device)
-        
+        N = vesicleTar.N
+        nvTar = vesicleTar.nv  # local target count
+        nvSou = L.shape[0]  # all source vesicles
+        device = far_field.device
+
+        all_points = torch.cat(
+            (
+                vesicleTar.X[:N, :].T.reshape(-1, 1),
+                vesicleTar.X[N:, :].T.reshape(-1, 1),
+            ),
+            dim=1,
+        )
+
         if N == 32:
-            if upsample <=0 :
-                const = 0.672  #* self.len0[0].item()
+            if upsample <= 0:
+                const = 0.672
             elif upsample == 2:
                 const = 0.566
             elif upsample == 4:
-                # const = 0.495 
-                const = 0.305 
+                const = 0.305
         else:
             const = 0.0132
 
+        # Source-side data for ALL vesicles
+        all_X = torch.cat(
+            (xlayers.reshape(-1, 1, nvSou), ylayers.reshape(-1, 1, nvSou)),
+            dim=1,
+        )
+        all_X = all_X / const
 
-        all_X = torch.concat((xlayers.reshape(-1,1,nv), ylayers.reshape(-1,1,nv)), dim=1) # (3 * N, 2, nv), 2 for x and y
-        all_X = all_X /const   
+        rhs = torch.cat(
+            (velx.reshape(-1, 1, nvSou), vely.reshape(-1, 1, nvSou)),
+            dim=1,
+        )
 
-        rhs = torch.concat((velx.reshape(-1,1,nv), vely.reshape(-1,1,nv)), dim=1) # (3 * N), 2, nv), 2 for x and y
-        
         y = torch.linalg.solve_triangular(L, rhs.permute(2, 0, 1), upper=False)
         coeffs = torch.linalg.solve_triangular(L.permute(0, 2, 1), y, upper=True)
-            
+
+        id1_global, id2_global = info
+
+        # keep only target points belonging to this local target block
+        mask = (tar_start * N <= id1_global) & (id1_global < tar_end * N)
+        id1_global = id1_global[mask]
+        id2_global = id2_global[mask]
+
+        if id1_global.numel() == 0:
+            return
+
+        # convert global target-point ids to local target-point ids
+        id1_local = id1_global - tar_start * N
+
+        if upsample <= 1:
+            id2_expand = id2_global[:, None] + torch.arange(
+                0, N * nlayers * nvSou, nvSou, device=id2_global.device
+            )
+            id2_expand = id2_expand.reshape(-1)
+
+            id1_expand = id1_local[:, None].expand(-1, N * nlayers).reshape(-1)
+
+            sp_matrix_ = torch.sparse_coo_tensor(
+                torch.vstack((id1_expand, id2_expand)),
+                torch.exp(
+                    -(
+                        torch.norm(
+                            all_points[id1_expand] / const
+                            - all_X.permute(0, 2, 1).reshape(-1, 2)[id2_expand, :],
+                            dim=-1,
+                        )
+                        ** 2
+                    )
+                ),
+                size=(N * nvTar, N * nlayers * nvSou),
+                device=device,
+            )
+
+            correction = torch.sparse.mm(
+                sp_matrix_,
+                coeffs.permute(1, 0, 2).reshape(nvSou * N * nlayers, 2),
+            )
+        else:
+            id2_expand = id2_global[:, None] + torch.arange(
+                0, upsample * N * nlayers * nvSou, nvSou, device=id2_global.device
+            )
+            id2_expand = id2_expand.reshape(-1)
+
+            id1_expand = (
+                id1_local[:, None].expand(-1, upsample * N * nlayers).reshape(-1)
+            )
+
+            sp_matrix_ = torch.sparse_coo_tensor(
+                torch.vstack((id1_expand, id2_expand)),
+                torch.exp(
+                    -(
+                        torch.norm(
+                            all_points[id1_expand] / const
+                            - all_X.permute(0, 2, 1).reshape(-1, 2)[id2_expand, :],
+                            dim=-1,
+                        )
+                        ** 2
+                    )
+                ),
+                size=(N * nvTar, upsample * N * nlayers * nvSou),
+                device=device,
+            )
+
+            correction = torch.sparse.mm(
+                sp_matrix_,
+                coeffs.permute(1, 0, 2).reshape(nvSou * upsample * N * nlayers, 2),
+            )
+
+        correction = correction.view(nvTar, N, 2).permute(2, 1, 0).reshape(2 * N, nvTar)
+        far_field += correction
+
+    def nearFieldCorrectionUP_SOLVE(
+        self,
+        vesicle,
+        upsample,
+        info,
+        L,
+        far_field,
+        velx,
+        vely,
+        xlayers,
+        ylayers,
+        nlayers,
+    ):
+        if len(info[0]) == 0 or len(info[1]) == 0:
+            return
+
+        N = vesicle.N
+        nv = vesicle.nv
+
+        all_points = torch.concat(
+            (vesicle.X[:N, :].T.reshape(-1, 1), vesicle.X[N:, :].T.reshape(-1, 1)),
+            dim=1,
+        )
+        # correction = torch.zeros((N*nv, 2), dtype=torch.float32, device=trac_jump.device)
+
+        if N == 32:
+            if upsample <= 0:
+                const = 0.672  # * self.len0[0].item()
+            elif upsample == 2:
+                const = 0.566
+            elif upsample == 4:
+                # const = 0.495
+                const = 0.305
+        else:
+            const = 0.0132
+
+        all_X = torch.concat(
+            (xlayers.reshape(-1, 1, nv), ylayers.reshape(-1, 1, nv)), dim=1
+        )  # (3 * N, 2, nv), 2 for x and y
+        all_X = all_X / const
+
+        rhs = torch.concat(
+            (velx.reshape(-1, 1, nv), vely.reshape(-1, 1, nv)), dim=1
+        )  # (3 * N), 2, nv), 2 for x and y
+
+        y = torch.linalg.solve_triangular(L, rhs.permute(2, 0, 1), upper=False)
+        coeffs = torch.linalg.solve_triangular(L.permute(0, 2, 1), y, upper=True)
 
         id1_, id2_ = info
         if upsample <= 1:
-            id2_ = id2_[:, None] + torch.arange(0, N*nlayers*nv, nv).to(id2_.device)
+            id2_ = id2_[:, None] + torch.arange(0, N * nlayers * nv, nv).to(id2_.device)
             id2_ = id2_.reshape(-1)
-            id1_ = id1_[:, None].expand(-1, N*nlayers).reshape(-1)
-            sp_matrix_ = torch.sparse_coo_tensor(torch.vstack((id1_, id2_)), 
-                            torch.exp(-torch.norm(all_points[id1_]/const - all_X.permute(0,2,1).reshape(-1, 2)[id2_, :], dim=-1)**2),
-                            size=(N*nv, N * nlayers * nv))
-            correction = torch.sparse.mm(sp_matrix_, coeffs.permute(1,0,2).reshape(nv * N* nlayers, 2))
+            id1_ = id1_[:, None].expand(-1, N * nlayers).reshape(-1)
+            sp_matrix_ = torch.sparse_coo_tensor(
+                torch.vstack((id1_, id2_)),
+                torch.exp(
+                    -(
+                        torch.norm(
+                            all_points[id1_] / const
+                            - all_X.permute(0, 2, 1).reshape(-1, 2)[id2_, :],
+                            dim=-1,
+                        )
+                        ** 2
+                    )
+                ),
+                size=(N * nv, N * nlayers * nv),
+            )
+            correction = torch.sparse.mm(
+                sp_matrix_, coeffs.permute(1, 0, 2).reshape(nv * N * nlayers, 2)
+            )
         else:
-            id2_ = id2_[:, None] + torch.arange(0, upsample * N*nlayers*nv, nv).to(id2_.device)
+            id2_ = id2_[:, None] + torch.arange(0, upsample * N * nlayers * nv, nv).to(
+                id2_.device
+            )
             id2_ = id2_.reshape(-1)
-            id1_ = id1_[:, None].expand(-1, upsample * N*nlayers).reshape(-1)
-            sp_matrix_ = torch.sparse_coo_tensor(torch.vstack((id1_, id2_)), 
-                            torch.exp(-torch.norm(all_points[id1_]/const - all_X.permute(0,2,1).reshape(-1, 2)[id2_, :], dim=-1)**2),
-                            size=(N*nv, upsample  * N * nlayers * nv))
-            correction = torch.sparse.mm(sp_matrix_, coeffs.permute(1,0,2).reshape(nv * upsample  * N* nlayers, 2))
-        
+            id1_ = id1_[:, None].expand(-1, upsample * N * nlayers).reshape(-1)
+            sp_matrix_ = torch.sparse_coo_tensor(
+                torch.vstack((id1_, id2_)),
+                torch.exp(
+                    -(
+                        torch.norm(
+                            all_points[id1_] / const
+                            - all_X.permute(0, 2, 1).reshape(-1, 2)[id2_, :],
+                            dim=-1,
+                        )
+                        ** 2
+                    )
+                ),
+                size=(N * nv, upsample * N * nlayers * nv),
+            )
+            correction = torch.sparse.mm(
+                sp_matrix_,
+                coeffs.permute(1, 0, 2).reshape(nv * upsample * N * nlayers, 2),
+            )
 
         correction = correction.view(nv, N, 2).permute(2, 1, 0).reshape(2 * N, nv)
         far_field += correction
-        return 
-
+        return
 
     def singQuadStokesSLmatrix(self, N):
         # Define the weights
-        v = torch.tensor([
-            6.531815708567918e-3,
-            9.086744584657729e-2,
-            3.967966533375878e-1,
-            1.027856640525646e+0,
-            1.945288592909266e+0,
-            2.980147933889640e+0,
-            3.998861349951123e+0
-        ], dtype=torch.float32)
-        
-        u = torch.tensor([
-            2.462194198995203e-2,
-            1.701315866854178e-1,
-            4.609256358650077e-1,
-            7.947291148621895e-1,
-            1.008710414337933e+0,
-            1.036093649726216e+0,
-            1.004787656533285e+0
-        ], dtype=torch.float32)
-        
+        v = torch.tensor(
+            [
+                6.531815708567918e-3,
+                9.086744584657729e-2,
+                3.967966533375878e-1,
+                1.027856640525646e0,
+                1.945288592909266e0,
+                2.980147933889640e0,
+                3.998861349951123e0,
+            ],
+            dtype=torch.float32,
+        )
+
+        u = torch.tensor(
+            [
+                2.462194198995203e-2,
+                1.701315866854178e-1,
+                4.609256358650077e-1,
+                7.947291148621895e-1,
+                1.008710414337933e0,
+                1.036093649726216e0,
+                1.004787656533285e0,
+            ],
+            dtype=torch.float32,
+        )
+
         a = 5
         h = 2 * np.pi / N
         n = N - 2 * a + 1
-        
+
         # Generate quadrature weights and points
         yt = h * torch.arange(a, n + a, dtype=torch.float32)
-        wt = torch.cat([h * u, h * torch.ones(len(yt)), h * torch.flip(u, [0])]) / (4 * np.pi)
-        
+        wt = torch.cat([h * u, h * torch.ones(len(yt)), h * torch.flip(u, [0])]) / (
+            4 * np.pi
+        )
+
         # Construct matrix B
         B = torch.zeros(len(yt), N)
         pos = torch.arange(a, n + a, dtype=torch.long)
         B[torch.arange(len(yt)), pos] = 1
-        
+
         # Compute interpolation matrices
         # Placeholder for sinc interpolation function (replace with actual implementation)
         of = fft1(N)
-        
-        A1 = of.sinterpS_(N, v*h)
-        A2 = of.sinterpS_(N, 2*torch.pi-torch.flip(v*h, [0]))
-            
+
+        A1 = of.sinterpS_(N, v * h)
+        A2 = of.sinterpS_(N, 2 * torch.pi - torch.flip(v * h, [0]))
+
         A = torch.cat([A1, B, A2])
-        
+
         qw = torch.cat([wt.unsqueeze(1), A], dim=1).float()
         qp = qw[:, 1:]
         qw = qw[:, 0]
-        
+
         # Compute index shifts for circulant matrix operations
         ind = torch.arange(N)
         Rfor = torch.zeros((N, N), dtype=torch.long)
         Rbac = torch.zeros((N, N), dtype=torch.long)
-        
+
         Rfor[:, 0] = ind
         Rbac[:, 0] = ind
-        
+
         # for k in range(1, N):
         #     Rfor[:, k] = (k) * N + torch.cat([ind[k:], ind[:k]])
         #     Rbac[:, k] = (k) * N + torch.cat([ind[-k:], ind[:-k]])
@@ -842,24 +1373,26 @@ class Poten:
         # Rbac = Rbac * N + indices.unsqueeze(0)
         Rbac += shift * N
 
-        
         return qw, qp, Rbac, Rfor
-
 
     @staticmethod
     def lagrange_interp():
         # Define the interpolation matrix LP directly
-        LP = torch.tensor([
-            [  64.80,  -388.80,   972.00, -1296.00,   972.00,  -388.80,   64.80 ],
-            [-226.80,  1296.00, -3078.00,  3888.00, -2754.00,  1036.80, -162.00 ],
-            [ 315.00, -1674.00,  3699.00, -4356.00,  2889.00, -1026.00,  153.00 ],
-            [-220.50,  1044.00, -2074.50,  2232.00, -1381.50,   468.00,  -67.50 ],
-            [  81.20,  -313.20,   526.50,  -508.00,   297.00,   -97.20,   13.70 ],
-            [ -14.70,    36.00,   -45.00,    40.00,   -22.50,     7.20,   -1.00 ],
-            [   1.00,     0.00,     0.00,     0.00,     0.00,     0.00,    0.00 ]
-        ], dtype=torch.float32)
+        LP = torch.tensor(
+            [
+                [64.80, -388.80, 972.00, -1296.00, 972.00, -388.80, 64.80],
+                [-226.80, 1296.00, -3078.00, 3888.00, -2754.00, 1036.80, -162.00],
+                [315.00, -1674.00, 3699.00, -4356.00, 2889.00, -1026.00, 153.00],
+                [-220.50, 1044.00, -2074.50, 2232.00, -1381.50, 468.00, -67.50],
+                [81.20, -313.20, 526.50, -508.00, 297.00, -97.20, 13.70],
+                [-14.70, 36.00, -45.00, 40.00, -22.50, 7.20, -1.00],
+                [1.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00],
+            ],
+            dtype=torch.float32,
+        )
 
         return LP
+
 
 # Example usage
 # N = 16  # Set an appropriate N value
