@@ -287,7 +287,7 @@ class capsules:
         N = X.shape[0] // 2
 
         # Initialize net repulsive force on each point of each vesicle
-        rep_force = torch.zeros((2 * N, chunk), dtype=torch.float32)
+        rep_force = torch.zeros((2 * N, chunk), dtype=X.dtype, device=device)
 
         # Pairwise differences for x and y across all points and vesicles
         dist_x = X_local[:N, :].unsqueeze(1).unsqueeze(3) - X[:N, :].unsqueeze(

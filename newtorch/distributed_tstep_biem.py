@@ -64,6 +64,7 @@ class TStepBiem:
 
         # vesicles' viscosity contrast
         self.viscCont = prams["viscCont"]
+        self.viscCont_local = self.viscCont[self.start : self.end].to(self.device)
 
         # GMRES tolerance
         self.gmresTol = prams["gmresTol"]
@@ -203,7 +204,7 @@ class TStepBiem:
         sigStore_local = sigStore[:, self.start : self.end].to(self.device)
 
         vesicle_local = capsules(
-            Xstore_local, sigStore_local, None, self.kappa, self.viscCont
+            Xstore_local, sigStore_local, None, self.kappa, self.viscCont_local
         )
 
         N = Xstore.shape[0] // 2  # Number of points per vesicle
@@ -212,6 +213,8 @@ class TStepBiem:
         # Constant in front of time derivative
         alpha = (1.0 + self.viscCont) / 2
         alpha = alpha.float()
+        alpha_local = (1.0 + self.viscCont_local) / 2
+        alpha_local = alpha_local.float()
 
         # Build single-layer potential matrix
         op = self.op
@@ -228,8 +231,15 @@ class TStepBiem:
 
         # --- Repulsion ---
         if self.repulsion:
-            repulsion_local = vesicle.repulsionForce(
-                Xstore_local, self.repStrength, self.minDist
+            repulsion_local = vesicle_local.dist_repulsionForce(
+                Xstore,
+                self.repStrength,
+                self.minDist,
+                self.start,
+                self.end,
+                Xstore_local,
+                self.chunk,
+                self.device,
             )
             Galpert_gather = [
                 torch.zeros_like(self.Galpert_local) for _ in range(self.size)
@@ -262,15 +272,15 @@ class TStepBiem:
             )
 
             rhs1_local = rhs1_local + self.dt * Frepulsion_local @ torch.diag(
-                1.0 / alpha
+                1.0 / alpha_local
             )
 
         # --- Far-field background flow ---
         vInf_local = self.farField(Xstore_local)
-        rhs1_local = rhs1_local + self.dt * vInf_local @ torch.diag(1.0 / alpha)
+        rhs1_local = rhs1_local + self.dt * vInf_local @ torch.diag(1.0 / alpha_local)
 
         # --- Inextensibility condition ---
-        rhs2_local = rhs2_local + vesicle.surfaceDiv(Xstore_local)
+        rhs2_local = rhs2_local + vesicle_local.surfaceDiv(Xstore_local)
 
         # --- Stack RHS ---
         rhs_local = torch.cat([rhs1_local, rhs2_local], dim=0)
@@ -280,7 +290,7 @@ class TStepBiem:
         if self.usePreco:
             Ben_local, Ten_local, Div_local = vesicle_local.computeDerivs()
             bdiagVes_LU = torch.zeros((3 * N, 3 * N, self.chunk))
-            bdiagVes_P = torch.zeros((3 * N, nv), dtype=torch.int32)
+            bdiagVes_P = torch.zeros((3 * N, self.chunk), dtype=torch.int32)
 
             I = torch.eye(2 * N).unsqueeze(-1).repeat(1, 1, self.chunk)  # (2N, 2N, nv)
             Z = torch.zeros((N, N, self.chunk))  # (N, N, nv)
@@ -295,7 +305,7 @@ class TStepBiem:
             DivZ = torch.cat([Div_local, Z], dim=1)  # (N, 3N, nv)
 
             # Compute alpha-inv terms
-            alpha_inv = 1.0 / alpha.view(1, 1, self.chunk)  # shape (1, 1, nv)
+            alpha_inv = 1.0 / alpha_local.view(1, 1, self.chunk)  # shape (1, 1, nv)
 
             # Build top-left block
             top_left = I + self.dt * vesicle.kappa * G_Ben_local
@@ -321,7 +331,7 @@ class TStepBiem:
         global matvecs
         matvecs = 0
 
-        gmres_func = lambda X: self.time_matvec(X, Xstore_local, vesicle, vesicle_local)
+        gmres_func = lambda X: self.time_matvec(X, vesicle, vesicle_local)
         cupy_lin_op = LinearOperator(
             (initGMRES.shape[0], initGMRES.shape[0]), gmres_func
         )
@@ -375,33 +385,31 @@ class TStepBiem:
 
         return X_, sigma_, eta, RS, iter, iflag
 
-    def time_matvec(self, Xn, Xn_local, vesicle, vesicle_local):
+    def time_matvec(self, Xn, vesicle, vesicle_local):
         """
         Matrix-vector product for GMRES
 
         Assumes no walls and no viscosity difference between vesicle and surrounding fluid
         """
-        Xn_local = Xn[:, self.start : self.end].to(self.device)
         global matvecs
         matvecs += 1
-        if isinstance(Xn_local, np.ndarray):
-            Xn_local = (
-                torch.from_numpy(Xn_local).to(self.device).double()
-            )  # Convert to tensor
-        elif isinstance(Xn_local, cp.ndarray):
-            Xn_local = torch.as_tensor(Xn_local).to(self.device).double()
+        if isinstance(Xn, np.ndarray):
+            Xn = torch.from_numpy(Xn).to(self.device).double()  # Convert to tensor
+        elif isinstance(Xn, cp.ndarray):
+            Xn = torch.as_tensor(Xn).to(self.device).double()
         else:
-            Xn_local = Xn_local.to(self.device).double()
+            Xn = Xn.to(self.device).double()
 
         op = self.op
         N = vesicle.N
 
-        device = Xn_local.device  # Use same device as input
-        dtype = Xn_local.dtype
+        device = Xn.device  # Use same device as input
+        dtype = Xn.dtype
 
         valPos_local = torch.zeros((2 * N, self.chunk), dtype=dtype, device=device)
 
-        Xn_reshaped_local = Xn_local.view(self.chunk, 3, N)  # [nv, 3, N]
+        Xn_reshaped = Xn.view(vesicle.nv, 3, N)  # [nv, 3, N]
+        Xn_reshaped_local = Xn_reshaped[self.start : self.end].to(self.device)
         Xm_local = (
             Xn_reshaped_local[:, 0:2, :]
             .reshape(self.chunk, 2 * N)
@@ -411,7 +419,7 @@ class TStepBiem:
         sigmaM_local = Xn_reshaped_local[:, 2, :].T.clone()
 
         f_local = vesicle_local.tracJump(Xm_local, sigmaM_local)
-        alpha = (1 + vesicle_local.viscCont) / 2
+        alpha_local = (1 + vesicle_local.viscCont) / 2
 
         Gf_local = op.exactStokesSLdiag(vesicle_local, self.Galpert_local, f_local)
         Galpert_gather = [
@@ -437,8 +445,8 @@ class TStepBiem:
             self.end,
         )
 
-        valPos_local -= self.dt * Gf_local / alpha
-        valPos_local -= self.dt * Fslp_local / alpha
+        valPos_local -= self.dt * Gf_local / alpha_local
+        valPos_local -= self.dt * Fslp_local / alpha_local
 
         valTen = vesicle_local.surfaceDiv(Xm_local)
         valPos_local += Xm_local
