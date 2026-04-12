@@ -37,10 +37,10 @@ sys.path.insert(0, parentdir)
 from curve_batch_compile import Curve
 
 # --- Load data ---
-filename = "output_BIEM/parareal_taylor.bin"
+filename = "test3.bin"
 parareal_x, parareal_time, N, nv, parareal_xinit = load_ves2d_file_singleX(filename)
 
-filename = "output_BIEM/biem_taylor.bin"
+filename = "test4.bin"
 ground_x, ground_time, N, nv, ground_xinit = load_ves2d_file_singleX(filename)
 
 parareal_ntime = parareal_time.size
