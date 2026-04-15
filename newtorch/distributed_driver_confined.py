@@ -1,5 +1,10 @@
 import torch
 
+from helper_functions import CommInfo, init_distributed
+
+comm_info = init_distributed()
+torch.cuda.set_device(comm_info.device)
+
 torch.set_default_dtype(torch.float32)
 import numpy as np
 from curve_batch_compile import Curve
@@ -13,11 +18,11 @@ from scipy.io import loadmat
 from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
 from torch.profiler import profile, ProfilerActivity
-from helper_functions import CommInfo, init_distributed
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
+
 
 def initVes2D(options=None, prams=None):
     """
@@ -85,10 +90,11 @@ def initVes2D(options=None, prams=None):
 
     return options, prams
 
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 if torch.cuda.is_available():
-    torch.set_default_device("cuda")
+    torch.set_default_device(comm_info.device)
 
 
 fileName = "./output_BIEM/shear.bin"  # To save simulation data
@@ -102,7 +108,7 @@ oc = Curve()  # You need to define this with required methods
 # ------------------------------
 prams = {}
 prams["Nbd"] = 32
-prams['nvbd'] = 0
+prams["nvbd"] = 0
 # prams["nvbd"] = 0
 
 t = torch.linspace(0, 2 * torch.pi, prams["Nbd"])  # end_point = False
@@ -121,9 +127,9 @@ Xwalls = None
 
 # Initial shape
 # selected_one = [0]
-#Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
+# Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
 Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
-#Xics = Xics - Xics.mean()
+# Xics = Xics - Xics.mean()
 
 sigma = None
 X = torch.from_numpy(Xics).float().to(device)
