@@ -615,3 +615,14 @@ def naiveNearZoneInfo(vesicleX, vesicleUpX, max_layer_dist=None):
         (ids0, ids1, ids2)  # for exactStokes
 
 
+def dist_wrapper_allExactStokesSLTarget_compare2(vesicleX, vesicle_sa, fup, tarX, info_stokes, base_offset=0):
+    nv = tarX.shape[1]
+    fn = allExactStokesSLTarget_compare2
+
+    ids0 = info_stokes[0]
+    ids1 = info_stokes[1]
+    ids2_global = info_stokes[2]
+    ids2_local = ids2_global - base_offset
+    far_field_1 = fn(vesicleX, vesicle_sa, fup, tarX, ids0, ids1, ids2_local, offset=base_offset)
+    
+    return far_field_1

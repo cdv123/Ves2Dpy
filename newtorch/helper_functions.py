@@ -60,13 +60,8 @@ def init_distributed():
     world_size = dist.get_world_size()
 
     local_rank = int(os.environ["LOCAL_RANK"])
-
-    if local_rank == 1:
-        torch.cuda.set_device(local_rank + 1)
-        device = torch.device(f"cuda:{local_rank+1}")
-    else:
-        torch.cuda.set_device(local_rank)
-        device = torch.device(f"cuda:{local_rank}")
+    torch.cuda.set_device(local_rank)
+    device = torch.device(f"cuda:{local_rank}")
 
 
     print(f"Rank {local_rank}/{world_size} on GPU {local_rank}")

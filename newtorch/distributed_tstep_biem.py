@@ -8,7 +8,7 @@ from curve_batch_compile import Curve
 from capsules import capsules
 from poten import Poten
 from tools.filter import interpft_vec, interpft
-from biem_support import wrapper_allExactStokesSLTarget_compare2, naiveNearZoneInfo
+from biem_support import dist_wrapper_allExactStokesSLTarget_compare2, naiveNearZoneInfo
 import cupy as cp
 
 if torch.cuda.is_available():
@@ -16,6 +16,12 @@ if torch.cuda.is_available():
 else:
     from scipy.sparse.linalg import gmres, LinearOperator
 
+def check_finite(name, x, rank):
+    if not torch.isfinite(x).all():
+        bad = (~torch.isfinite(x)).sum().item()
+        xmin = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).min().item() if x.numel() else 0.0
+        xmax = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).max().item() if x.numel() else 0.0
+        raise RuntimeError(f"[rank {rank}] {name} has non-finite values; bad={bad}, shape={tuple(x.shape)}, min={xmin}, max={xmax}")
 
 class gmres_counter(object):
     def __init__(self, disp=True):
@@ -224,6 +230,7 @@ class TStepBiem:
 
         # print("nearZone finished")
         # Right-hand side components
+        self.NearV2V = naiveNearZoneInfo(Xstore, interpft_vec(Xstore, op.Nup))
         rhs1_local = Xstore_local
         rhs2_local = torch.zeros(
             (N, self.chunk), dtype=Xstore.dtype, device=Xstore.device
@@ -264,11 +271,12 @@ class TStepBiem:
                 repulsion_global,
                 SLP,
                 self.NearV2V,
-                wrapper_allExactStokesSLTarget_compare2,  # change to make it target vesicles
+                dist_wrapper_allExactStokesSLTarget_compare2,  # change to make it target vesicles
                 vesicle_local,
                 True,
                 self.start,
                 self.end,
+                self.rank
             )
 
             rhs1_local = rhs1_local + self.dt * Frepulsion_local @ torch.diag(
@@ -338,6 +346,9 @@ class TStepBiem:
         torch.cuda.empty_cache()
 
         counter = gmres_counter(disp=True)
+        rhs_gather = [torch.empty_like(rhs_local) for _ in range(self.size)]
+        dist.all_gather(rhs_gather, rhs_local)
+        rhs = torch.cat(rhs_gather, dim=0).contiguous()
 
         if self.usePreco:
             # print(f"gmres tol {self.gmresTol}")
@@ -348,7 +359,7 @@ class TStepBiem:
                 Xn, info = gmres(
                     cupy_lin_op,
                     cp.asarray(rhs),
-                    tol=self.gmresTol,
+                    rtol=self.gmresTol,
                     maxiter=self.gmresMaxIter,
                     M=precond_lin_op,
                     x0=cp.asarray(initGMRES),
@@ -365,7 +376,7 @@ class TStepBiem:
                 )
         else:
             Xn, info = gmres(
-                cupy_lin_op, rhs_local, tol=self.gmresTol, maxiter=self.gmresMaxIter
+                cupy_lin_op, cp.asarray(rhs), rtol=self.gmresTol, maxiter=self.gmresMaxIter
             )
 
         # print(f"gmres takes {counter.niter} iterations")
@@ -385,6 +396,7 @@ class TStepBiem:
 
         return X_, sigma_, eta, RS, iter, iflag
 
+
     def time_matvec(self, Xn, vesicle, vesicle_local):
         """
         Matrix-vector product for GMRES
@@ -394,9 +406,10 @@ class TStepBiem:
         global matvecs
         matvecs += 1
         if isinstance(Xn, np.ndarray):
-            Xn = torch.from_numpy(Xn).to(self.device).double()  # Convert to tensor
+            Xn = torch.from_numpy(Xn).to(self.device).double()
         elif isinstance(Xn, cp.ndarray):
-            Xn = torch.as_tensor(Xn).to(self.device).double()
+            # Xn = torch.as_tensor(Xn).to(self.device).double()
+            Xn = torch.utils.dlpack.from_dlpack(Xn.toDlpack()).to(self.device).double()
         else:
             Xn = Xn.to(self.device).double()
 
@@ -419,31 +432,38 @@ class TStepBiem:
         sigmaM_local = Xn_reshaped_local[:, 2, :].T.clone()
 
         f_local = vesicle_local.tracJump(Xm_local, sigmaM_local)
+        check_finite("f_local", f_local, self.rank)
         alpha_local = (1 + vesicle_local.viscCont) / 2
 
         Gf_local = op.exactStokesSLdiag(vesicle_local, self.Galpert_local, f_local)
+        check_finite("Gf_local", Gf_local, self.rank)
+        self.Galpert_local = self.Galpert_local.contiguous()
         Galpert_gather = [
             torch.zeros_like(self.Galpert_local) for _ in range(self.size)
         ]
         dist.all_gather(Galpert_gather, self.Galpert_local)
         self.Galpert = torch.cat(Galpert_gather, dim=2)
+        check_finite("Galpert", self.Galpert, self.rank)
 
         SLP = lambda X: op.exactStokesSLdiag(vesicle, self.Galpert, X)
         f_gather = [torch.zeros_like(f_local) for _ in range(self.size)]
         dist.all_gather(f_gather, f_local)
         f = torch.cat(f_gather, dim=1)
+        check_finite("f", f, self.rank)
 
         Fslp_local = op.dist_nearSingInt_rbf(
             vesicle,
             f,
             SLP,
             self.NearV2V,
-            wrapper_allExactStokesSLTarget_compare2,
+            dist_wrapper_allExactStokesSLTarget_compare2,
             vesicle_local,
             True,
             self.start,
             self.end,
+            self.rank
         )
+        check_finite("Fslp_local", Fslp_local, self.rank)
 
         valPos_local -= self.dt * Gf_local / alpha_local
         valPos_local -= self.dt * Fslp_local / alpha_local
@@ -462,7 +482,7 @@ class TStepBiem:
         val_global = torch.cat(val_gather, dim=0)
 
         return (
-            cp.asarray(val_global)
+            cp.fromDlpack(torch.utils.dlpack.to_dlpack(val_global))
             if torch.cuda.is_available()
             else np.asarray(val_global)
         )
@@ -508,39 +528,43 @@ class TStepBiem:
         vel = torch.stack([velx, vely], dim=0)
         return vel
 
-    def preconditionerBD(o, z):
-        """
-        Applies block-diagonal preconditioner to the GMRES input vector `z`.
-
-        Args:
-            o: Object with attributes:
-                - bdiagVes: Contains LU decompositions (L, U) for each vesicle.
-                - bdiagWall: Preconditioner matrix (or operator) for the wall.
-            z: Flattened torch tensor of shape (3*N*nv + 2*Nbd*nvbd + ...)
-
-        Returns:
-            val: Preconditioned vector as torch tensor.
-        """
+    def preconditionerBD(self, z):
         if isinstance(z, np.ndarray):
-            z = torch.from_numpy(z).double()  # Convert to tensor
+            z = torch.from_numpy(z).to(self.device).double()
         elif isinstance(z, cp.ndarray):
-            z = torch.as_tensor(z).double()
+            z = torch.as_tensor(z, device=self.device).double()
+        else:
+            z = z.to(self.device).double()
 
-        nv = o.bdiagVes["LU"].shape[0]  # number of vesicles
-        N = o.bdiagVes["LU"].shape[1] // 3  # points per vesicle
+        N = self.bdiagVes["LU"].shape[1] // 3      # points per vesicle
+        chunk = self.chunk
+        start = self.start
+        end = self.end
+        nv = self.nv
 
-        # Extract vesicle part
-        zves = z[: 3 * N * nv]
-        zves_batched = zves.view(nv, 3 * N).unsqueeze(-1)
-        # Use batched LU solve: LU is (3N, 3N, nv), pivots is (3N, nv)
-        valVes_batched = torch.linalg.lu_solve(
-            o.bdiagVes["LU"], o.bdiagVes["pivots"], zves_batched
-        )
-        valVes = valVes_batched.squeeze(-1).reshape(-1)
+        # Global vector is ordered by vesicle because of:
+        # torch.cat((Xstore, sigStore), dim=0).T.reshape(-1)
+        zves = z[: 3 * N * nv].view(nv, 3 * N)
 
-        # Combine and return
-        val = torch.cat([valVes, valWalls], dim=0) if o.confined else valVes
-        return cp.asarray(val) if torch.cuda.is_available() else np.asarray(val)
+        # Take this rank's vesicles
+        zves_local = zves[start:end].unsqueeze(-1)   # (chunk, 3N, 1)
+
+        # Local batched solve
+        val_local = torch.linalg.lu_solve(
+            self.bdiagVes["LU"],          # (chunk, 3N, 3N)
+            self.bdiagVes["pivots"],      # (chunk, 3N)
+            zves_local                    # (chunk, 3N, 1)
+        ).squeeze(-1)                     # (chunk, 3N)
+
+        val_local_flat = val_local.reshape(-1).contiguous()
+
+        # Gather solved local chunks into a global vector
+        gathered = [torch.empty_like(val_local_flat) for _ in range(self.size)]
+        dist.all_gather(gathered, val_local_flat)
+
+        val_global = torch.cat(gathered, dim=0).contiguous()
+
+        return cp.asarray(val_global) if torch.cuda.is_available() else val_global.cpu().numpy()
 
     def wallsPrecond(o):
         """

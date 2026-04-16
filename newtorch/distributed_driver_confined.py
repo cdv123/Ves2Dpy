@@ -10,19 +10,16 @@ import numpy as np
 from curve_batch_compile import Curve
 from capsules import capsules
 import time
-from tstep_biem import TStepBiem
+from distributed_tstep_biem import TStepBiem
 import matplotlib.pyplot as plt
-from mpi4py import MPI
-from petsc4py import PETSc
 from scipy.io import loadmat
 from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
 from torch.profiler import profile, ProfilerActivity
 
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
-size = comm.Get_size()
 
+rank = comm_info.rank
+size = comm_info.numProcs
 
 def initVes2D(options=None, prams=None):
     """
@@ -143,7 +140,7 @@ prams["N"] = X.shape[0] // 2
 prams["nv"] = X.shape[1]
 prams["dt"] = 1e-5
 # prams['T'] = 50000 * prams['dt']
-prams["T"] = 5000 * prams["dt"]
+prams["T"] = 100 * prams["dt"]
 prams["kappa"] = 1.0
 prams["viscCont"] = torch.ones(prams["nv"])
 prams["gmresTol"] = 1e-10
@@ -188,7 +185,7 @@ with open(fileName, "wb") as fid:
 print(prams)
 print(options)
 
-tt = TStepBiem(X, Xwalls, options, prams)
+tt = TStepBiem(X, Xwalls, options, prams, rank, size, device)
 
 if options["confined"]:
     tt.initialConfined()
@@ -257,5 +254,6 @@ for step in tqdm(range(int(prams["T"] / prams["dt"]))):
     print("*****************************************************************")
 
     output = np.concatenate(([time_], X.cpu().numpy().T.flatten())).astype("float64")
-    with open(fileName, "ab") as fid:
-        output.tofile(fid)
+    if rank == 0:
+        with open(fileName, "ab") as fid:
+            output.tofile(fid)

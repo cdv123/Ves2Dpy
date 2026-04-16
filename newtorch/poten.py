@@ -15,6 +15,13 @@ from biem_support import (
     exactStokesSL_onlyself_old,
 )
 
+def check_finite(name, x, rank):
+    if not torch.isfinite(x).all():
+        bad = (~torch.isfinite(x)).sum().item()
+        xmin = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).min().item() if x.numel() else 0.0
+        xmax = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).max().item() if x.numel() else 0.0
+        raise RuntimeError(f"[rank {rank}] {name} has non-finite values; bad={bad}, shape={tuple(x.shape)}, min={xmin}, max={xmax}")
+
 
 class Poten:
     def __init__(self, N):
@@ -718,6 +725,7 @@ class Poten:
         tEqualS,
         start,
         end,
+        rank
     ):
         """
         Computes a layer potential due to `f` at all points in `vesicleTar.X`.
@@ -764,19 +772,36 @@ class Poten:
 
         # interpOrder = self.interpMat.shape[0]
         # p = (interpOrder + 1) // 2
-
         if tEqualS and nvSou > 1:
-            # Compute far-field ignoring self-interactions
-            # idx = torch.arange(nvSou)
-            # farField = torch.stack([kernelDirect(vesicleUp, fup, Xtar[:, k], idx[idx != k]) for k in range(nvSou)], dim=1)
-            farField = kernelDirect(vesicleUp.X, vesicleUp.sa, fup, Xtar, NearV2V[-1])
-            # farField = kernelDirect(vesicleUp.X, vesicleUp.sa, fup, Xtar, (torch.tensor([], dtype=torch.int64), torch.tensor([], dtype=torch.int64), torch.tensor([], dtype=torch.int64)))
+            info_stokes = NearV2V[-1]
+
+            ids0 = info_stokes[0]
+            ids1 = info_stokes[1]
+            ids2_global = info_stokes[2]
+
+            mask = (start <= ids2_global) & (ids2_global < end)
+
+            info_stokes_local_targets = (
+                ids0[mask],
+                ids1[mask],
+                ids2_global[mask],   # keep GLOBAL target ids
+            )
+
+            farField = kernelDirect(
+                vesicleUp.X,
+                vesicleUp.sa,
+                fup,
+                Xtar,
+                info_stokes_local_targets,
+                base_offset=start,
+            )
         elif not tEqualS:
             farField = kernelDirect(vesicleUp, fup, Xtar, torch.arange(nvSou))
         else:
             farField = torch.zeros(
                 (2 * Ntar, nvTar), dtype=torch.float32, device=device
             )
+        check_finite("farField_before_correction", farField, rank)
 
         upsample = -1
         if Nsou == 32:
@@ -818,9 +843,9 @@ class Poten:
         dlayer = torch.linspace(
             0, 1 / N, nlayers, dtype=torch.float32, device=Xsou.device
         )
-        _, tang = oc.diffProp_jac_tan(Xup)
-        rep_nx = tang[Nup:, :, None].expand(-1, -1, nlayers - 1)
-        rep_ny = -tang[:Nup, :, None].expand(-1, -1, nlayers - 1)
+        _, tang = oc.diffProp_jac_tan(Xup_self)
+        rep_nx = tang[Nup_self:, :, None].expand(-1, -1, nlayers - 1)
+        rep_ny = -tang[:Nup_self, :, None].expand(-1, -1, nlayers - 1)
         dx = (
             rep_nx * dlayer[[1, 2, 3]] if nlayers == 4 else rep_nx * dlayer[[1, 2]]
         )  # (N, nv, nlayers-1)
@@ -830,12 +855,10 @@ class Poten:
                 [
                     torch.repeat_interleave(
                         Xup_self[:Nup_self, :, None], nlayers - 1, dim=-1
-                    )
-                    + dx,
+                    ) + dx,
                     torch.repeat_interleave(
                         Xup_self[Nup_self:, :, None], nlayers - 1, dim=-1
-                    )
-                    + dy,
+                    ) + dy,
                 ]
             ),
             (0, 2, 1),
