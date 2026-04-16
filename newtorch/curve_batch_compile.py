@@ -2,7 +2,7 @@
 import torch
 import numpy as np
 
-torch.set_default_dtype(torch.float32)
+torch.set_default_dtype(torch.float64)
 # from scipy.interpolate import CubicSpline
 # from scipy.optimize import minimize
 # from fft1 import fft1
@@ -46,7 +46,7 @@ class Curve:
     def setXY(self, x, y):
         """Set the [x,y] component of vector V on the curve."""
         N = x.shape[0]
-        V = torch.zeros(2 * N, x.shape[1], dtype=torch.float32, device=x.device)
+        V = torch.zeros(2 * N, x.shape[1], dtype=torch.float64, device=x.device)
         V[:N, :] = x
         V[N:, :] = y
         return V
@@ -69,7 +69,7 @@ class Curve:
         nx, ny = tan[tan.shape[0] // 2 :, :], -tan[: tan.shape[0] // 2, :]
         x, y = X[: X.shape[0] // 2, :], X[X.shape[0] // 2 :, :]
 
-        center = torch.zeros((2, nv), dtype=torch.float32, device=X.device)
+        center = torch.zeros((2, nv), dtype=torch.float64, device=X.device)
         xdotn = x * nx
         ydotn = y * ny
         xdotn_sum = torch.sum(xdotn * jac, dim=0)
@@ -92,7 +92,7 @@ class Curve:
         nx, ny = tan[tan.shape[0] // 2 :, :], -tan[: tan.shape[0] // 2, :]
         x, y = X[: X.shape[0] // 2, :], X[X.shape[0] // 2 :, :]
 
-        center = torch.zeros((2, nv), dtype=torch.float32, device=X.device)
+        center = torch.zeros((2, nv), dtype=torch.float64, device=X.device)
         xdotn = x * nx
         ydotn = y * ny
         xdotn_sum = torch.sum(xdotn * jac, dim=0)
@@ -113,7 +113,7 @@ class Curve:
         N, nv = X.shape[0] // 2, X.shape[1]
 
         x, y = X[: X.shape[0] // 2, :], X[X.shape[0] // 2 :, :]
-        center = torch.zeros((2, nv), dtype=torch.float32, device=X.device)
+        center = torch.zeros((2, nv), dtype=torch.float64, device=X.device)
         # A = 0.5 * (torch.sum(x[:-1] * y[1:] - x[1:] * y[:-1], dim=0) + x[-1] * y[0] - x[0] * y[-1])
         Dx, Dy = self.getDXY(X)
         A = torch.sum(x * Dy - y * Dx, dim=0)  # * torch.pi / N
@@ -134,7 +134,7 @@ class Curve:
         % principal dim corresponding to the smallest principal moment of inertia
         """
         nv = X.shape[1]
-        # IA = torch.zeros(nv, dtype=torch.float32)
+        # IA = torch.zeros(nv, dtype=torch.float64)
         # % compute inclination angle on an upsampled grid
         N = X.shape[0] // 2
         # modes = torch.concatenate((torch.arange(0, N // 2), torch.tensor([0]), torch.arange(-N // 2 + 1, 0))).double()
@@ -227,15 +227,15 @@ class Curve:
         principal axis corresponding to the smallest principal moment of inertia.
         """
         nv = X.shape[1]
-        IA = torch.zeros(nv, dtype=torch.float32, device=X.device)
+        IA = torch.zeros(nv, dtype=torch.float64, device=X.device)
 
         # Compute inclination angle on an upsampled grid
         N = X.shape[0] // 2
         modes = torch.cat(
             (
-                torch.arange(0, N // 2, dtype=torch.float32),
+                torch.arange(0, N // 2, dtype=torch.float64),
                 torch.tensor([0.0]),
-                torch.arange(-N // 2 + 1, 0, dtype=torch.float32),
+                torch.arange(-N // 2 + 1, 0, dtype=torch.float64),
             )
         )
 
@@ -347,7 +347,7 @@ class Curve:
         """
         N = X.shape[0] // 2  # Number of points
         nv = X.shape[1]  # Number of variables
-        # multiple_V = torch.zeros((2,nv), dtype=torch.float32)
+        # multiple_V = torch.zeros((2,nv), dtype=torch.float64)
 
         # for k in range(nv):
         #     # Compute the centered coordinates
@@ -651,7 +651,7 @@ class Curve:
                 print("Correction scheme failed, do not correct at this step")
                 Xnew[:, k] = X[:, k]
 
-        return torch.from_numpy(Xnew).float()
+        return torch.from_numpy(Xnew).double()
 
     def nonlcon(self, X, a0, l0):
         """Non-linear constraints required by minimize."""
@@ -680,8 +680,8 @@ class Curve:
 
         # % Find the current area and length
         _, a, l = self.geomProp(X)
-        area0 = area0.float()
-        length0 = length0.float()
+        area0 = area0.double()
+        length0 = length0.double()
         eAt = torch.abs((a - area0) / area0)
         eLt = torch.abs((l - length0) / length0)
         if torch.max(eAt) < tolConstraint and torch.max(eLt) < tolConstraint:
@@ -730,8 +730,8 @@ class Curve:
             def forward(self, lamb, mu):
                 _, a, l = self.c.geomProp(self.z)
                 nv = self.X.shape[1]
-                a = a.float()
-                l = l.float()
+                a = a.double()
+                l = l.double()
                 return (
                     a,
                     l,
@@ -775,10 +775,10 @@ class Curve:
 
         it = 0
         lamb = torch.zeros(
-            X_to_correct.shape[1] * 2, device=X.device, dtype=torch.float32
+            X_to_correct.shape[1] * 2, device=X.device, dtype=torch.float64
         )
         mu = 0.1
-        aug_lag_model = AugLag(X_to_correct.float()).to(X.device)
+        aug_lag_model = AugLag(X_to_correct.double()).to(X.device)
 
         while it < maxiter:
             if it % 5 == 0:
@@ -820,8 +820,8 @@ class Curve:
 
         # % Find the current area and length
         _, a, l = self.geomProp(X)
-        area0 = area0.float()
-        length0 = length0.float()
+        area0 = area0.double()
+        length0 = length0.double()
         eAt = torch.abs((a - area0) / area0)
         eLt = torch.abs((l - length0) / length0)
         if torch.max(eAt) < tolConstraint and torch.max(eLt) < tolConstraint:
@@ -874,8 +874,8 @@ class Curve:
             def forward(self, lamb, mu):
                 _, a, l = self.c.geomProp(self.z)
                 nv = self.X.shape[1]
-                a = a.float()
-                l = l.float()
+                a = a.double()
+                l = l.double()
                 # return a, l, mean_rel_err(self.z, self.X), \
                 #       - 1.0/nv * torch.inner(lamb[:nv], (a -area0)) - 1.0/nv * torch.inner(lamb[nv:], (l - length0)) + \
                 # 1/(2*mu) * torch.mean((a-area0)**2 + (l-length0)**2)
@@ -921,10 +921,10 @@ class Curve:
 
         it = 0
         lamb = torch.zeros(
-            X_to_correct.shape[1] * 2, device=X.device, dtype=torch.float32
+            X_to_correct.shape[1] * 2, device=X.device, dtype=torch.float64
         )
         mu = 0.1
-        aug_lag_model = AugLag(X_to_correct.float(), oc).to(X.device)
+        aug_lag_model = AugLag(X_to_correct.double(), oc).to(X.device)
 
         while it < maxiter:
             if it % 5 == 0:
@@ -1068,14 +1068,14 @@ class Curve:
             # theta = torch.from_numpy(theta).to(X.device)
 
             zX = X[:N, ids] + 1.0j * X[N:, ids]
-            zXh = torch.fft.fft(zX.cfloat(), dim=0) / N
+            zXh = torch.fft.fft(zX.cdouble(), dim=0) / N
             # zX = torch.zeros((N, len(ids)), dtype=torch.complex128, device=X.device)
             # for jj in range(N): # use broadcasting to remove this loop
             #     zX += zXh[jj] * torch.exp(1j * modes[jj] * theta)
             zX_ = torch.einsum(
                 "mj,mnj->nj",
                 zXh,
-                torch.exp(1.0j * modes[:, None, None] * theta).cfloat(),
+                torch.exp(1.0j * modes[:, None, None] * theta).cdouble(),
             )
 
             # zX_ = torch.exp(1j * modes[:,None,None] * theta).permute(1,2,0) @ zXh.T
@@ -1093,7 +1093,7 @@ class Curve:
     #     % arclength
     #     """
     #     N = len(x)
-    #     t = torch.arange(N, dtype=torch.float32, device=x.device) * 2 * torch.pi / N
+    #     t = torch.arange(N, dtype=torch.float64, device=x.device) * 2 * torch.pi / N
     #     X = torch.concatenate((x, y))
     #     if len(X.shape) < 2:
     #         X = X.unsqueeze(-1)
@@ -1155,7 +1155,7 @@ class Curve:
         """
         N = x.shape[0] // 2
         Nup = N * 6
-        t = torch.arange(Nup, dtype=torch.float32, device=x.device) * 2 * torch.pi / Nup
+        t = torch.arange(Nup, dtype=torch.float64, device=x.device) * 2 * torch.pi / Nup
 
         # X = torch.concatenate((interpft(x, Nup), interpft(y, Nup)))
         X = upsample_fft(x, Nup)

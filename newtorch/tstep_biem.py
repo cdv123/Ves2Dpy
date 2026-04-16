@@ -421,7 +421,7 @@ class TStepBiem:
                 Xn, info = gmres(
                     cupy_lin_op,
                     cp.asarray(rhs),
-                    tol=self.gmresTol,
+                    rtol=self.gmresTol,
                     maxiter=self.gmresMaxIter,
                     M=precond_lin_op,
                     x0=cp.asarray(initGMRES),
@@ -438,7 +438,7 @@ class TStepBiem:
                 )
         else:
             Xn, info = gmres(
-                cupy_lin_op, cp.asarray(rhs), tol=self.gmresTol, maxiter=self.gmresMaxIter
+                cupy_lin_op, cp.asarray(rhs), rtol=self.gmresTol, maxiter=self.gmresMaxIter
             )
 
         # print(f"gmres takes {counter.niter} iterations")
