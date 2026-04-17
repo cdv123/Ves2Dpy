@@ -1,8 +1,9 @@
 import torch
 
-from helper_functions import CommInfo, init_distributed
+from helper_functions import CommInfo, mpi_init_distributed
+from mpi4py import MPI
 
-comm_info = init_distributed()
+comm_info = mpi_init_distributed()
 torch.cuda.set_device(comm_info.device)
 
 torch.set_default_dtype(torch.float64)
@@ -17,9 +18,15 @@ from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
 from torch.profiler import profile, ProfilerActivity
 
+comm = MPI.COMM_WORLD
+mpi_rank = comm.Get_rank()
+mpi_size = comm.Get_size()
 
 rank = comm_info.rank
 size = comm_info.numProcs
+
+print("ranks", rank, mpi_rank)
+print("size", size, mpi_size)
 
 def initVes2D(options=None, prams=None):
     """
