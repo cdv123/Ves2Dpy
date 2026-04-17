@@ -8,7 +8,7 @@ import torch
 import torch.fft
 import math
 
-torch.set_default_dtype(torch.float64)
+torch.set_default_dtype(torch.float32)
 from biem_support import (
     exactStokesSL_,
     exactStokesSL_onlyself,
@@ -49,8 +49,6 @@ class Poten:
         self.interpMat = self.lagrange_interp()
         # Compute restriction and prolongation matrices
         self.Restrict_LP, self.Prolong_LP = fft1.fourierRandP(self.N, self.Nup)
-        self.Restrict_LP = self.Restrict_LP.double()
-        self.Prolong_LP = self.Prolong_LP.double()
 
     def stokesSLmatrix(self, vesicle):
         # Creating vesicleUp (similar to MATLAB's capsules_py function)
@@ -61,7 +59,7 @@ class Poten:
         sa = vesicleUp.sa[None, :].expand(
             vesicleUp.N, -1, -1
         )  # (vesicleUp.N, vesicleUp.N, vesicle.nv)
-        sa = sa.double()
+        sa = sa.float()
 
         x, y = vesicleUp.X[: self.Nup, :], vesicleUp.X[self.Nup :, :]
 
@@ -137,7 +135,7 @@ class Poten:
         # G12 = (torch.matmul(self.qp.T, self.qw * diffx * diffy * rho2))[self.Rbac].T * sa
 
         # Initializing G tensor
-        G = torch.zeros(vesicle.nv, 2 * vesicle.N, 2 * vesicle.N, dtype=torch.float64)
+        G = torch.zeros(vesicle.nv, 2 * vesicle.N, 2 * vesicle.N)
         # Populate G tensor
         G[:, : self.N, : self.N] = torch.matmul(
             self.Restrict_LP[None, :], torch.matmul(G11, self.Prolong_LP[None, :])
@@ -364,7 +362,7 @@ class Poten:
         Ntar = Xtar.shape[0] // 2
         ncol = Xtar.shape[1]
         stokesSLPtar = torch.zeros(
-            (2 * Ntar, ncol), dtype=torch.float64, device=vesicle.X.device
+            (2 * Ntar, ncol), dtype=torch.float32, device=vesicle.X.device
         )
 
         den = f * torch.tile(vesicle.sa, (2, 1)) * 2 * torch.pi / vesicle.N
@@ -419,7 +417,7 @@ class Poten:
         ncol = Xtar.shape[1]
 
         # Initialize output
-        laplaceDLPtar = torch.zeros((2 * Ntar, ncol), dtype=torch.float64)
+        laplaceDLPtar = torch.zeros((2 * Ntar, ncol), dtype=torch.float32)
 
         # Multiply by arclength term
         den = (
@@ -479,7 +477,7 @@ class Poten:
         Ntar = Xtar.shape[0] // 2
         ncol = Xtar.shape[1]
         stokesDLPtar = torch.zeros(
-            (2 * Ntar, ncol), dtype=torch.float64, device=vesicle.X.device
+            (2 * Ntar, ncol), dtype=torch.float32, device=vesicle.X.device
         )
 
         # Compute density function with jacobian term and viscosity contrast scaling
@@ -616,11 +614,11 @@ class Poten:
         #     farField = kernelDirect(vesicleUp.X, vesicleUp.sa, fup, Xtar, torch.arange(nvSou))
         else:
             farField = torch.zeros(
-                (2 * Ntar, nvTar), dtype=torch.float64, device=device
+                (2 * Ntar, nvTar), dtype=torch.float32, device=device
             )
 
         # Initialize nearField
-        nearField = torch.zeros((2 * Ntar, nvTar), dtype=torch.float64, device=device)
+        nearField = torch.zeros((2 * Ntar, nvTar), dtype=torch.float32, device=device)
 
         beta = 1.1  # Buffer factor for interpolation points
 
@@ -652,7 +650,7 @@ class Poten:
 
                 # # vel = torch.zeros((2 * len(J), nvTar, nvSou), dtype=torch.float32, device=device)
                 vel = torch.zeros(
-                    (2 * Ntar, nvTar, nvSou), dtype=torch.float64, device=device
+                    (2 * Ntar, nvTar, nvSou), dtype=torch.float32, device=device
                 )
                 v = self.filter_to_be_implemented(self.interpMat @ vself[pn, k1].T)
                 vel[J, k2, k1] = v[-1, :]
@@ -801,7 +799,7 @@ class Poten:
             farField = kernelDirect(vesicleUp, fup, Xtar, torch.arange(nvSou))
         else:
             farField = torch.zeros(
-                (2 * Ntar, nvTar), dtype=torch.float64, device=device
+                (2 * Ntar, nvTar), dtype=torch.float32, device=device
             )
         check_finite("farField_before_correction", farField, rank)
 
@@ -843,7 +841,7 @@ class Poten:
         # vesicleUp = capsules(Xup, None, None, vesicle.kappa, vesicle.viscCont)
         oc = Curve()
         dlayer = torch.linspace(
-            0, 1 / N, nlayers, dtype=torch.float64, device=Xsou.device
+            0, 1 / N, nlayers, dtype=torch.float32, device=Xsou.device
         )
         _, tang = oc.diffProp_jac_tan(Xup_self)
         rep_nx = tang[Nup_self:, :, None].expand(-1, -1, nlayers - 1)
@@ -976,7 +974,7 @@ class Poten:
             farField = kernelDirect(vesicleUp, fup, Xtar, torch.arange(nvSou))
         else:
             farField = torch.zeros(
-                (2 * Ntar, nvTar), dtype=torch.float64, device=device
+                (2 * Ntar, nvTar), dtype=torch.float32, device=device
             )
 
         upsample = -1
@@ -1015,7 +1013,7 @@ class Poten:
         # vesicleUp = capsules(Xup, None, None, vesicle.kappa, vesicle.viscCont)
         oc = Curve()
         dlayer = torch.linspace(
-            0, 1 / N, nlayers, dtype=torch.float64, device=Xsou.device
+            0, 1 / N, nlayers, dtype=torch.float32, device=Xsou.device
         )
         _, tang = oc.diffProp_jac_tan(Xup)
         rep_nx = tang[Nup:, :, None].expand(-1, -1, nlayers - 1)
@@ -1328,7 +1326,7 @@ class Poten:
                 2.980147933889640e0,
                 3.998861349951123e0,
             ],
-            dtype=torch.float64,
+            dtype=torch.float32,
         )
 
         u = torch.tensor(
@@ -1341,7 +1339,7 @@ class Poten:
                 1.036093649726216e0,
                 1.004787656533285e0,
             ],
-            dtype=torch.float64,
+            dtype=torch.float32,
         )
 
         a = 5
@@ -1349,7 +1347,7 @@ class Poten:
         n = N - 2 * a + 1
 
         # Generate quadrature weights and points
-        yt = h * torch.arange(a, n + a, dtype=torch.float64)
+        yt = h * torch.arange(a, n + a, dtype=torch.float32)
         wt = torch.cat([h * u, h * torch.ones(len(yt)), h * torch.flip(u, [0])]) / (
             4 * np.pi
         )
@@ -1368,7 +1366,7 @@ class Poten:
 
         A = torch.cat([A1, B, A2])
 
-        qw = torch.cat([wt.unsqueeze(1), A], dim=1).double()
+        qw = torch.cat([wt.unsqueeze(1), A], dim=1).float()
         qp = qw[:, 1:]
         qw = qw[:, 0]
 
@@ -1413,7 +1411,7 @@ class Poten:
                 [-14.70, 36.00, -45.00, 40.00, -22.50, 7.20, -1.00],
                 [1.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00],
             ],
-            dtype=torch.float64,
+            dtype=torch.float32,
         )
 
         return LP

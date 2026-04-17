@@ -5,7 +5,7 @@ from helper_functions import CommInfo, init_distributed
 comm_info = init_distributed()
 torch.cuda.set_device(comm_info.device)
 
-torch.set_default_dtype(torch.float64)
+torch.set_default_dtype(torch.float32)
 import numpy as np
 from curve_batch_compile import Curve
 from capsules import capsules
@@ -129,7 +129,7 @@ Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
 # Xics = Xics - Xics.mean()
 
 sigma = None
-X = torch.from_numpy(Xics).double().to(device)
+X = torch.from_numpy(Xics).float().to(device)
 X = interpft_vec(X, 128).to(device)
 
 
@@ -212,7 +212,7 @@ if options["confined"]:
 time_ = 0.0
 modes = torch.concatenate(
     (torch.arange(0, prams["N"] // 2), torch.arange(-prams["N"] // 2, 0))
-).to(X.device).double()
+).to(X.device)  # .double()
 print("GMRES max iter:", prams["gmresMaxIter"])
 print("is cuda available:", torch.cuda.is_available())
 
@@ -239,7 +239,7 @@ for step in tqdm(range(int(prams["T"] / prams["dt"]))):
 
     # start.record()
     if options["correctShape"]:
-        X = oc.correctAreaAndLengthAugLag(X.double(), area0, len0)
+        X = oc.correctAreaAndLengthAugLag(X.float(), area0, len0)
         # X = X.double()
 
     # X = filterShape(X, modeCut=10)

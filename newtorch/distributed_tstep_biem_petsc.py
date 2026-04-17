@@ -12,7 +12,7 @@ from tools.filter import interpft_vec
 from biem_support import dist_wrapper_allExactStokesSLTarget_compare2, naiveNearZoneInfo
 
 
-torch.set_default_dtype(torch.float64)
+torch.set_default_dtype(torch.float32)
 
 
 def check_finite(name, x, rank):
@@ -223,10 +223,10 @@ class TStepBiem:
     def _build_block_diag_preconditioner(self, vesicle, vesicle_local, N, alpha_local):
         Ben_local, Ten_local, Div_local = vesicle_local.computeDerivs()
 
-        I = torch.eye(2 * N, device=self.device, dtype=torch.float64).unsqueeze(-1).repeat(
+        I = torch.eye(2 * N, device=self.device, dtype=torch.float32).unsqueeze(-1).repeat(
             1, 1, self.chunk
         )
-        Z = torch.zeros((N, N, self.chunk), device=self.device, dtype=torch.float64)
+        Z = torch.zeros((N, N, self.chunk), device=self.device, dtype=torch.float32)
 
         G_Ben_local = torch.matmul(
             self.Galpert_local.permute(2, 0, 1), Ben_local.permute(2, 0, 1)
@@ -291,7 +291,7 @@ class TStepBiem:
         iflag = reason <= 0
 
         x_local = torch.from_numpy(np.asarray(x.getArray(readonly=True))).to(
-            self.device, dtype=torch.float64
+            self.device, dtype=torch.float32
         )
 
         x.destroy()
@@ -313,7 +313,7 @@ class TStepBiem:
         N = Xstore.shape[0] // 2
         nv = Xstore.shape[1]
 
-        alpha_local = ((1.0 + self.viscCont_local) / 2).double()
+        alpha_local = ((1.0 + self.viscCont_local) / 2).float()
 
         op = self.op
         self.Galpert_local = op.stokesSLmatrix(vesicle_local).contiguous()
@@ -369,7 +369,7 @@ class TStepBiem:
                 1.0 / alpha_local
             )
 
-        vInf_local = self.farField(Xstore_local).double()
+        vInf_local = self.farField(Xstore_local)
         rhs1_local = rhs1_local + self.dt * vInf_local @ torch.diag(1.0 / alpha_local)
         rhs2_local = rhs2_local + vesicle_local.surfaceDiv(Xstore_local)
 
