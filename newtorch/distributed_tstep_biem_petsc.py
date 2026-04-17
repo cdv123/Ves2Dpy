@@ -189,30 +189,17 @@ class TStepBiem:
         arr = vec.getArray(readonly=True)
         return torch.from_numpy(np.asarray(arr)).to(self.device, dtype=torch.float64)
 
-    def _mpi_allgather_same_shape(self, x: torch.Tensor, dim: int) -> torch.Tensor:
-        """
-        All-gather tensors that have the same shape on every rank, then concatenate
-        along the requested dimension.
-        """
-        x_cpu = x.detach().cpu().numpy()
-        gathered = self.mpi_comm.allgather(x_cpu)
-        out = np.concatenate(gathered, axis=dim)
-        return torch.from_numpy(out).to(device=x.device, dtype=x.dtype)
-
-    def _mpi_allgather_flat(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        All-gather 1D local vectors and concatenate along axis 0.
-        """
-        x_cpu = x.detach().cpu().numpy()
-        gathered = self.mpi_comm.allgather(x_cpu)
-        out = np.concatenate(gathered, axis=0)
-        return torch.from_numpy(out).to(device=x.device, dtype=x.dtype)
-
     def _allgather_global_density(self, f_local: torch.Tensor) -> torch.Tensor:
+        """Gather only the source density needed for off-rank interactions.
+
+        With the current decomposition, the matrix-free operator is local in the
+        unknown block (Xm, sigma) for traction/divergence evaluation. The only
+        quantity that must be made global for vesicle-vesicle interactions is the
+        traction jump density f.
         """
-        Gather only the source density needed for off-rank interactions.
-        """
-        return self._mpi_allgather_same_shape(f_local.contiguous(), dim=1)
+        parts = [torch.zeros_like(f_local) for _ in range(self.size)]
+        dist.all_gather(parts, f_local.contiguous())
+        return torch.cat(parts, dim=1)
 
     def _make_global_rhs_vec(self, rhs_local: torch.Tensor, vec_type=None) -> PETSc.Vec:
         rhs_np = rhs_local.detach().cpu().numpy().astype(np.float64, copy=False)
@@ -336,9 +323,9 @@ class TStepBiem:
         # This is needed by the near-singular correction when evaluating vself for
         # all source vesicles, but it should not be rebuilt inside every Krylov matvec.
         if nv > 1:
-            self.Galpert = self._mpi_allgather_same_shape(
-                self.Galpert_local.contiguous(), dim=2
-            ).contiguous()
+            galpert_parts = [torch.zeros_like(self.Galpert_local) for _ in range(self.size)]
+            dist.all_gather(galpert_parts, self.Galpert_local)
+            self.Galpert = torch.cat(galpert_parts, dim=2).contiguous()
         else:
             self.Galpert = self.Galpert_local
 
@@ -357,9 +344,9 @@ class TStepBiem:
                 self.device,
             )
 
-            repulsion_global = self._mpi_allgather_same_shape(
-                repulsion_local.contiguous(), dim=1
-            )
+            rep_parts = [torch.zeros_like(repulsion_local) for _ in range(self.size)]
+            dist.all_gather(rep_parts, repulsion_local)
+            repulsion_global = torch.cat(rep_parts, dim=1)
 
             Frepulsion_local = op.exactStokesSLdiag(
                 vesicle_local, self.Galpert_local, repulsion_local
@@ -398,7 +385,9 @@ class TStepBiem:
             rhs_local, init_local, vesicle, vesicle_local
         )
 
-        Xn = self._mpi_allgather_flat(Xn_local.contiguous())
+        x_parts = [torch.zeros_like(Xn_local) for _ in range(self.size)]
+        dist.all_gather(x_parts, Xn_local)
+        Xn = torch.cat(x_parts, dim=0)
 
         eta = None
         RS = None

@@ -12,7 +12,6 @@ from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
 from torch.profiler import profile, ProfilerActivity
 
-torch.set_default_dtype(torch.float32)
 
 def initVes2D(options=None, prams=None):
     """

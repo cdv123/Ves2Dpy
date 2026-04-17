@@ -393,7 +393,7 @@ class TStepBiem:
             self.bdiagVes = {"LU": bdiagVes_LU, "pivots": bdiagVes_P}
 
         # --- GMRES solve ---
-        initGMRES = torch.cat((Xstore, sigStore), dim=0).float().T.reshape(-1)
+        initGMRES = torch.cat((Xstore, sigStore), dim=0).double().T.reshape(-1)
         if self.confined:
             RS = RSstore[:, 1:]
             initGMRES = torch.cat([initGMRES, etaStore.view(-1), RS.view(-1)])
@@ -454,7 +454,7 @@ class TStepBiem:
 
         Xn_reshaped = Xn.view(nv, 3, N)  # [nv, 3, N]
         X_ = Xn_reshaped[:, 0:2, :].reshape(nv, 2 * N).transpose(0, 1).clone()
-        sigma_ = Xn_reshaped[:, 2, :].T.clone().to(dtype=torch.float32)
+        sigma_ = Xn_reshaped[:, 2, :].T.clone().to(dtype=torch.float64)
 
         if self.confined:
             Xn = Xn[3 * nv * N :]
@@ -475,9 +475,9 @@ class TStepBiem:
         matvecs += 1
 
         if isinstance(Xn, np.ndarray):
-            Xn = torch.from_numpy(Xn).float()  # Convert to tensor
+            Xn = torch.from_numpy(Xn).double()  # Convert to tensor
         elif isinstance(Xn, cp.ndarray):
-            Xn = torch.utils.dlpack.from_dlpack(Xn.toDlpack()).float()
+            Xn = torch.utils.dlpack.from_dlpack(Xn.toDlpack()).double()
 
         walls = self.Xwalls
         op = self.op
@@ -719,10 +719,10 @@ class TStepBiem:
             val: Preconditioned vector as torch tensor.
         """
         if isinstance(z, np.ndarray):
-            z = torch.from_numpy(z).float()  # Convert to tensor
+            z = torch.from_numpy(z).double()  # Convert to tensor
         elif isinstance(z, cp.ndarray):
-            # z = torch.as_tensor(z).float()
-            z = torch.utils.dlpack.from_dlpack(z.toDlpack()).float()
+            # z = torch.as_tensor(z).double()
+            z = torch.utils.dlpack.from_dlpack(z.toDlpack()).double()
 
         nv = o.bdiagVes["LU"].shape[0]  # number of vesicles
         N = o.bdiagVes["LU"].shape[1] // 3  # points per vesicle
@@ -775,9 +775,9 @@ class TStepBiem:
         Ntot = 2 * Nbd * nvbd
         Nstokes = 3 * (nvbd - 1)
 
-        M11 = torch.zeros((Ntot, Ntot), dtype=torch.float32)
-        M12 = torch.zeros((Ntot, Nstokes), dtype=torch.float32)
-        M21 = torch.zeros((Nstokes, Ntot), dtype=torch.float32)
+        M11 = torch.zeros((Ntot, Ntot), dtype=torch.float64)
+        M12 = torch.zeros((Ntot, Nstokes), dtype=torch.float64)
+        M21 = torch.zeros((Nstokes, Ntot), dtype=torch.float64)
 
         # Diagonal jump terms
         jump = -0.5
@@ -787,7 +787,7 @@ class TStepBiem:
             istart = 2 * Nbd * k
             iend = istart + 2 * Nbd
             M11[istart:iend, istart:iend] += (
-                jump * torch.eye(2 * Nbd, dtype=torch.float32) + o.wallDLP[:, :, k]
+                jump * torch.eye(2 * Nbd, dtype=torch.float64) + o.wallDLP[:, :, k]
             )
 
         # Off-diagonal interactions
@@ -871,7 +871,7 @@ class TStepBiem:
                 M12[istart + Nbd : iend + Nbd, base + 2] -= dx / rho2
 
         # M22 — identity block for constraints
-        M22 = -2 * math.pi * torch.eye(3 * (nvbd - 1), dtype=torch.float32)
+        M22 = -2 * math.pi * torch.eye(3 * (nvbd - 1), dtype=torch.float64)
 
         # Stack full block matrix
         top = torch.cat([M11, M12], dim=1)

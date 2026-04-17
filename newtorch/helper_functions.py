@@ -66,29 +66,3 @@ def init_distributed():
 
     print(f"Rank {local_rank}/{world_size} on GPU {local_rank}")
     return CommInfo(local_rank, world_size, device)
-
-def mpi_init_distributed():
-    from mpi4py import MPI
-    import socket
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    world_size = comm.Get_size()
-
-    if torch.cuda.is_available():
-        ngpu = torch.cuda.device_count()
-        if ngpu == 0:
-            raise RuntimeError("CUDA is available but no GPUs were found")
-
-        # Simple single-node mapping
-        local_rank = rank % ngpu
-
-        torch.cuda.set_device(local_rank)
-        device = torch.device(f"cuda:{local_rank}")
-    else:
-        local_rank = 0
-        device = torch.device("cpu")
-
-    host = socket.gethostname()
-    print(f"MPI rank {rank}/{world_size} on {host} using {device}")
-
-    return CommInfo(rank, world_size, device)
