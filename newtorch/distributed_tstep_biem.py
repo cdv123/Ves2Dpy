@@ -1,13 +1,12 @@
+import math
+import numpy as np
 import torch
 from torch import distributed as dist
-import numpy as np
-import math
 
-torch.set_default_dtype(torch.float32)
 from curve_batch_compile import Curve
 from capsules import capsules
 from poten import Poten
-from tools.filter import interpft_vec, interpft
+from tools.filter import interpft_vec
 from biem_support import dist_wrapper_allExactStokesSLTarget_compare2, naiveNearZoneInfo
 import cupy as cp
 
@@ -16,14 +15,29 @@ if torch.cuda.is_available():
 else:
     from scipy.sparse.linalg import gmres, LinearOperator
 
+
+torch.set_default_dtype(torch.float32)
+
+
 def check_finite(name, x, rank):
     if not torch.isfinite(x).all():
         bad = (~torch.isfinite(x)).sum().item()
-        xmin = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).min().item() if x.numel() else 0.0
-        xmax = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).max().item() if x.numel() else 0.0
-        raise RuntimeError(f"[rank {rank}] {name} has non-finite values; bad={bad}, shape={tuple(x.shape)}, min={xmin}, max={xmax}")
+        xmin = (
+            torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).min().item()
+            if x.numel()
+            else 0.0
+        )
+        xmax = (
+            torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).max().item()
+            if x.numel()
+            else 0.0
+        )
+        raise RuntimeError(
+            f"[rank {rank}] {name} has non-finite values; bad={bad}, shape={tuple(x.shape)}, min={xmin}, max={xmax}"
+        )
 
-class gmres_counter(object):
+
+class gmres_counter:
     def __init__(self, disp=True):
         self._disp = disp
         self.niter = 0
@@ -34,50 +48,44 @@ class gmres_counter(object):
 
 class TStepBiem:
     """
-    This class defines the functions required to advance the geometry
-    forward in time. Handles both implicit and explicit vesicle-vesicle
-    interactions, different inextensibility conditions, viscosity
-    contrast, solid walls vs. unbounded flows. This class also
-    implements the adaptive time stepping strategy where the errors in
-    length, area, and the residual are monitored to adaptively choose a
-    time step size.
+    Matrix-free distributed BIEM time-stepper.
+
+    Important limitation:
+    cupyx.scipy.sparse.linalg.gmres is not MPI-distributed, so every rank still
+    owns the full Krylov vector. The expensive operator application and block-
+    diagonal preconditioner are distributed across ranks, and only the minimum
+    global gathers required by the replicated GMRES are performed.
     """
 
     def __init__(self, X, Xwalls, options, prams, rank, size, device):
         oc = Curve()
 
-        self.Xwalls = Xwalls  # Points coordinates on walls
-        _, self.area, self.length = oc.geomProp(X)  # vesicles' initial area and length
+        self.Xwalls = Xwalls
+        _, self.area, self.length = oc.geomProp(X)
 
-        self.dt = prams["dt"]  # Time step size
+        self.dt = prams["dt"]
         self.rank = rank
         self.size = size
         self.nv = X.shape[1]
+        if self.nv % size != 0:
+            raise ValueError(
+                f"nv={self.nv} must be divisible by world_size={size} for this implementation."
+            )
         self.chunk = self.nv // size
-
         self.start = rank * self.chunk
         self.end = (rank + 1) * self.chunk
         self.device = device
+        self.dtype = X.dtype
 
-        # Method always starts at time 0
         self.currentTime = 0.0
-
-        # Need the time horizon for adaptive time stepping
         self.finalTime = prams["T"]
-
-        # vesicles' bending stiffness
         self.kappa = prams["kappa"]
-
-        # vesicles' viscosity contrast
         self.viscCont = prams["viscCont"]
         self.viscCont_local = self.viscCont[self.start : self.end].to(self.device)
-
-        # GMRES tolerance
         self.gmresTol = prams["gmresTol"]
-        # maximum number of gmres iterations
         self.gmresMaxIter = prams["gmresMaxIter"]
+        self.areaLenTol = prams["areaLenTol"]
 
-        # Far field boundary condition
         self.farField = lambda X_: self.bg_flow(
             X_,
             self.Xwalls,
@@ -87,156 +95,180 @@ class TStepBiem:
             vortexSize=prams["vortexSize"],
         )
 
-        # whether geometry is bounded or not
         self.confined = self.Xwalls is not None
-
-        # allowable error in area and length
-        self.areaLenTol = prams["areaLenTol"]
-
-        # use repulsion in the model
         self.repulsion = options["repulsion"]
-        # if there is only one vesicle, turn off repulsion
         if prams["nv"] == 1 and not self.confined:
             self.repulsion = False
-
-        # repulsion strength
         self.repStrength = prams["repStrength"]
-        # minimum distance to activate repulsion
         self.minDist = prams["minDist"]
 
-        # class for evaluating potential so that we don't have
-        # to keep building quadrature matrices
         self.op = Poten(prams["N"])
-
-        # use block-diagonal preconditioner?
         self.usePreco = options["usePreco"]
-        self.bdiagVes = None  # precomputed inverse of block-diagonal preconditioner
+        self.matFreeWalls = options.get("matFreeWalls", False)
 
-        # build poten classes for walls
-        if self.confined:
-            self.initialConfined()  # create wall related matrices (preconditioner, DL potential, etc)
-
-            self.eta = None  # density on wall
-            self.RS = None  # rotlets and stokeslets defined at the center
-
-            # Compute wall-wall interactions matrix free
-            self.matFreeWalls = options["matFreeWalls"]
-        else:
-            self.opWall = None
-
-        # precomputed inverse of block-diagonal preconditioner for tension solve
+        self.bdiagVes = None
         self.bdiagTen = None
-
-        # precomputed inverse of block-diagonal preconditioner only for wall-wall interactions
         self.bdiagWall = None
-
-        # Double-layer potential due to solid walls
         self.wallDLP = None
-
-        # Modification of double-layer potential to remove the rank deficiency on outer boundary
         self.wallN0 = None
-
-        # wall2wall interaction matrix computed in initialConfined
         self.wallDLPandRSmat = None
-
-        # do we have wall matrices computed before?
         self.haveWallMats = False
-
-        # Single-layer stokes potential matrix using Alpert quadrature
         self.Galpert = None
-
-        # Double-layer stokes potential matrix
+        self.Galpert_local = None
         self.D = None
-
-        # Double-layer Laplace potential matrix
         self.lapDLP = None
-
-        # Double-layer stokes potential matrix without correction
         self.DLPnoCorr = None
-
-        # Single-layer stokes potential matrix without correction
         self.SLPnoCorr = None
-
-        # near-singular integration for vesicle to vesicle
         self.NearV2V = None
-
-        # near-singular integration for wall to vesicle
         self.NearW2V = None
-
-        # near-singular integration for vesicle to wall
         self.NearV2W = None
-
-        # near-singular integration for wall to wall
         self.NearW2W = None
-
-        # Inverse of the blocks of wall-2-wall interaction matrix
         self.invM11 = None
         self.invM22 = None
 
+        # Timestep cache: rebuilt once per time-step, reused by every GMRES matvec.
+        self._vesicle = None
+        self._vesicle_local = None
+        self._N = None
+        self._alpha = None
+        self._alpha_local = None
+        self._global_vec_len = None
+        self._rhs = None
+        self._rhs_local = None
+        self._gather_rhs_buf = None
+        self._gather_f_buf = None
+        self._gather_val_buf = None
+        self._gather_galpert_buf = None
+        self._local_val_shape = None
+        self._local_rhs_shape = None
+        self._local_force_shape = None
+
+        if self.confined:
+            self.initial_confined()
+            self.eta = None
+            self.RS = None
+        else:
+            self.opWall = None
+
     def initial_confined(self):
-        """
-        Builds wall-related matrices for the confined domain simulation.
-        """
-        Nbd = self.Xwalls.shape[0] // 2  # number of points per wall
-        nvbd = self.Xwalls.shape[1]  # number of walls
-
-        # If the walls are discretized with the same Nbd
+        Nbd = self.Xwalls.shape[0] // 2
+        nvbd = self.Xwalls.shape[1]
         self.opWall = Poten(Nbd)
-
-        # Velocity on solid walls from the no-slip boundary condition
         uwalls = self.farField([])
-
-        # Build the wall vesicle-like structure
         self.walls = capsules(
             self.Xwalls, None, uwalls, torch.zeros(nvbd, 1), torch.zeros(nvbd, 1)
         )
-
-        # Build and store the double-layer potential matrix for walls
         self.wallDLP = self.opWall.stokesDLmatrix(self.walls)
-
-        # Matrix N0 to remove rank-1 deficiency
         self.wallN0 = self.opWall.stokesN0matrix(self.walls)
-
-        # Block diagonal preconditioner for the solid walls
         self.bdiagWall = self.walls.wallsPrecond()
 
-    def time_step(self, Xstore, sigStore, etaStore, RSstore):
-        """
-        Advances the solution one timestep using implicit vesicle-vesicle interactions.
-        """
-        vesicle = capsules(Xstore, sigStore, None, self.kappa, self.viscCont)
-        # print("After vesicle", torch.cuda.memory_allocated())
+    def _cupy_to_torch(self, x, dtype=torch.float64):
+        if isinstance(x, cp.ndarray):
+            return torch.utils.dlpack.from_dlpack(x.toDlpack()).to(
+                self.device, dtype=dtype
+            )
+        if isinstance(x, np.ndarray):
+            return torch.from_numpy(x).to(self.device, dtype=dtype)
+        return x.to(self.device, dtype=dtype)
+
+    def _torch_to_cupy(self, x):
+        return cp.fromDlpack(torch.utils.dlpack.to_dlpack(x.contiguous()))
+
+    def _build_timestep_cache(self, Xstore, sigStore):
+        self._vesicle = capsules(Xstore, sigStore, None, self.kappa, self.viscCont)
+
         Xstore_local = Xstore[:, self.start : self.end].to(self.device)
         sigStore_local = sigStore[:, self.start : self.end].to(self.device)
-
-        vesicle_local = capsules(
-            Xstore_local, sigStore_local, None, self.kappa, self.viscCont_local
+        self._vesicle_local = capsules(
+            Xstore_local,
+            sigStore_local,
+            None,
+            self.kappa,
+            self.viscCont_local,
         )
 
-        N = Xstore.shape[0] // 2  # Number of points per vesicle
-        nv = Xstore.shape[1]  # Number of vesicles
+        N = Xstore.shape[0] // 2
+        self._N = N
+        self._alpha = ((1.0 + self.viscCont) / 2).to(self.device, dtype=Xstore.dtype)
+        self._alpha_local = ((1.0 + self.viscCont_local) / 2).to(
+            self.device, dtype=Xstore.dtype
+        )
+        self._global_vec_len = self.nv * 3 * N
 
-        # Constant in front of time derivative
-        alpha = (1.0 + self.viscCont) / 2
-        alpha = alpha.float()
-        alpha_local = (1.0 + self.viscCont_local) / 2
-        alpha_local = alpha_local.float()
+        # Build these once per step, not once per matvec.
+        self.Galpert_local = self.op.stokesSLmatrix(self._vesicle_local).contiguous()
+        self._local_force_shape = (2 * N, self.chunk)
+        self._local_rhs_shape = (3 * N * self.chunk,)
+        self._local_val_shape = (3 * N * self.chunk,)
+        self._gather_galpert_buf = [
+            torch.empty_like(self.Galpert_local) for _ in range(self.size)
+        ]
+        dist.all_gather(self._gather_galpert_buf, self.Galpert_local)
+        self.Galpert = torch.cat(self._gather_galpert_buf, dim=2).contiguous()
 
-        # Build single-layer potential matrix
-        op = self.op
-        # self.Galpert = op.stokesSLmatrix(vesicle)
-        self.Galpert_local = op.stokesSLmatrix(vesicle_local)
-        # print("After galpert", torch.cuda.memory_allocated())
+        self.NearV2V = naiveNearZoneInfo(Xstore, interpft_vec(Xstore, self.op.Nup))
 
-        # print("nearZone finished")
-        # Right-hand side components
-        self.NearV2V = naiveNearZoneInfo(Xstore, interpft_vec(Xstore, op.Nup))
-        rhs1_local = Xstore_local
+        self._gather_rhs_buf = [
+            torch.empty(self._local_rhs_shape, dtype=Xstore.dtype, device=self.device)
+            for _ in range(self.size)
+        ]
+        self._gather_f_buf = [
+            torch.empty(self._local_force_shape, dtype=Xstore.dtype, device=self.device)
+            for _ in range(self.size)
+        ]
+        self._gather_val_buf = [
+            torch.empty(self._local_val_shape, dtype=Xstore.dtype, device=self.device)
+            for _ in range(self.size)
+        ]
+
+    def _build_block_diagonal_preconditioner(self):
+        if not self.usePreco:
+            self.bdiagVes = None
+            return
+
+        N = self._N
+        vesicle_local = self._vesicle_local
+        alpha_local = self._alpha_local
+
+        Ben_local, Ten_local, Div_local = vesicle_local.computeDerivs()
+        I = (
+            torch.eye(2 * N, device=self.device, dtype=self.dtype)
+            .unsqueeze(-1)
+            .repeat(1, 1, self.chunk)
+        )
+        Z = torch.zeros((N, N, self.chunk), device=self.device, dtype=self.dtype)
+
+        G_Ben_local = torch.matmul(
+            self.Galpert_local.permute(2, 0, 1),
+            Ben_local.permute(2, 0, 1),
+        ).permute(1, 2, 0)
+        G_Ten_local = torch.matmul(
+            self.Galpert_local.permute(2, 0, 1),
+            Ten_local.permute(2, 0, 1),
+        ).permute(1, 2, 0)
+        DivZ = torch.cat([Div_local, Z], dim=1)
+
+        alpha_inv = (1.0 / alpha_local).view(1, 1, self.chunk)
+        top_left = I + self.dt * self.kappa * G_Ben_local
+        top_right = -self.dt * G_Ten_local * alpha_inv
+        top = torch.cat([top_left, top_right], dim=1)
+        mat_all = torch.cat([top, DivZ], dim=0)
+
+        LU, pivots = torch.linalg.lu_factor(mat_all.permute(2, 0, 1).contiguous())
+        self.bdiagVes = {"LU": LU, "pivots": pivots}
+
+    def _assemble_rhs(self, Xstore):
+        N = self._N
+        Xstore_local = Xstore[:, self.start : self.end].to(self.device)
+        vesicle = self._vesicle
+        vesicle_local = self._vesicle_local
+        alpha_local = self._alpha_local
+
+        rhs1_local = Xstore_local.clone()
         rhs2_local = torch.zeros(
-            (N, self.chunk), dtype=Xstore.dtype, device=Xstore.device
+            (N, self.chunk), dtype=Xstore.dtype, device=self.device
         )
 
-        # --- Repulsion ---
         if self.repulsion:
             repulsion_local = vesicle_local.dist_repulsionForce(
                 Xstore,
@@ -248,209 +280,130 @@ class TStepBiem:
                 self.chunk,
                 self.device,
             )
-            Galpert_gather = [
-                torch.zeros_like(self.Galpert_local) for _ in range(self.size)
-            ]
-            dist.all_gather(Galpert_gather, self.Galpert_local)
-            self.Galpert = torch.cat(Galpert_gather, dim=2)
-
             repulsion_gather = [
-                torch.zeros_like(repulsion_local) for _ in range(self.size)
+                torch.empty_like(repulsion_local) for _ in range(self.size)
             ]
             dist.all_gather(repulsion_gather, repulsion_local)
-            repulsion_global = torch.cat(repulsion_gather, dim=1)
+            repulsion_global = torch.cat(repulsion_gather, dim=1).contiguous()
 
-            Frepulsion_local = op.exactStokesSLdiag(
+            Frepulsion_local = self.op.exactStokesSLdiag(
                 vesicle_local, self.Galpert_local, repulsion_local
             )
-            SLP = lambda X: op.exactStokesSLdiag(vesicle, self.Galpert, X)
-
-            # Frepulsion += op.nearSingInt(vesicle, repulsion, SLP, self.NearV2V, op.exactStokesSL, vesicle, True)
-            Frepulsion_local += op.dist_nearSingInt_rbf(
+            SLP = lambda X: self.op.exactStokesSLdiag(vesicle, self.Galpert, X)
+            Frepulsion_local += self.op.dist_nearSingInt_rbf(
                 vesicle,
                 repulsion_global,
                 SLP,
                 self.NearV2V,
-                dist_wrapper_allExactStokesSLTarget_compare2,  # change to make it target vesicles
+                dist_wrapper_allExactStokesSLTarget_compare2,
                 vesicle_local,
                 True,
                 self.start,
                 self.end,
-                self.rank
+                self.rank,
             )
-
             rhs1_local = rhs1_local + self.dt * Frepulsion_local @ torch.diag(
                 1.0 / alpha_local
             )
 
-        # --- Far-field background flow ---
         vInf_local = self.farField(Xstore_local)
         rhs1_local = rhs1_local + self.dt * vInf_local @ torch.diag(1.0 / alpha_local)
-
-        # --- Inextensibility condition ---
         rhs2_local = rhs2_local + vesicle_local.surfaceDiv(Xstore_local)
 
-        # --- Stack RHS ---
-        rhs_local = torch.cat([rhs1_local, rhs2_local], dim=0)
-        rhs_local = rhs_local.T.reshape(-1)
-
-        # --- Preconditioner ---
-        if self.usePreco:
-            Ben_local, Ten_local, Div_local = vesicle_local.computeDerivs()
-            bdiagVes_LU = torch.zeros((3 * N, 3 * N, self.chunk))
-            bdiagVes_P = torch.zeros((3 * N, self.chunk), dtype=torch.int32)
-
-            I = torch.eye(2 * N).unsqueeze(-1).repeat(1, 1, self.chunk)  # (2N, 2N, nv)
-            Z = torch.zeros((N, N, self.chunk))  # (N, N, nv)
-
-            # Shared blocks
-            G_Ben_local = torch.matmul(
-                self.Galpert_local.permute(2, 0, 1), Ben_local.permute(2, 0, 1)
-            ).permute(1, 2, 0)  # (2N, N, nv)
-            G_Ten_local = torch.matmul(
-                self.Galpert_local.permute(2, 0, 1), Ten_local.permute(2, 0, 1)
-            ).permute(1, 2, 0)  # (2N, N, nv)
-            DivZ = torch.cat([Div_local, Z], dim=1)  # (N, 3N, nv)
-
-            # Compute alpha-inv terms
-            alpha_inv = 1.0 / alpha_local.view(1, 1, self.chunk)  # shape (1, 1, nv)
-
-            # Build top-left block
-            top_left = I + self.dt * vesicle.kappa * G_Ben_local
-
-            # Top-right block (same in both cases)
-            top_right = -self.dt * G_Ten_local * alpha_inv
-
-            # Combine top blocks
-            top = torch.cat([top_left, top_right], dim=1)  # (2N, 3N, nv)
-
-            # Combine with bottom block
-            mat_all = torch.cat([top, DivZ], dim=0)  # (3N, 3N, nv)
-
-            LU, P = torch.linalg.lu_factor(mat_all.permute(2, 0, 1))
-            bdiagVes_LU = LU
-            bdiagVes_P = P
-
-            self.bdiagVes = {"LU": bdiagVes_LU, "pivots": bdiagVes_P}
-
-        # --- GMRES solve ---
-        initGMRES = torch.cat((Xstore, sigStore), dim=0).double().T.reshape(-1)
-
-        global matvecs
-        matvecs = 0
-
-        gmres_func = lambda X: self.time_matvec(X, vesicle, vesicle_local)
-        cupy_lin_op = LinearOperator(
-            (initGMRES.shape[0], initGMRES.shape[0]), gmres_func
+        rhs_local = (
+            torch.cat([rhs1_local, rhs2_local], dim=0).T.reshape(-1).contiguous()
         )
-        torch.cuda.empty_cache()
+        dist.all_gather(self._gather_rhs_buf, rhs_local)
+        self._rhs_local = rhs_local
+        self._rhs = torch.cat(self._gather_rhs_buf, dim=0).contiguous()
 
+    def time_step(self, Xstore, sigStore, etaStore, RSstore):
+        self._build_timestep_cache(Xstore, sigStore)
+        self._build_block_diagonal_preconditioner()
+        self._assemble_rhs(Xstore)
+
+        initGMRES = (
+            torch.cat((Xstore, sigStore), dim=0)
+            .T.reshape(-1)
+            .to(self.device, dtype=torch.float64)
+        )
         counter = gmres_counter(disp=True)
-        rhs_gather = [torch.empty_like(rhs_local) for _ in range(self.size)]
-        dist.all_gather(rhs_gather, rhs_local)
-        rhs = torch.cat(rhs_gather, dim=0).contiguous()
+
+        gmres_func = lambda X: self.time_matvec(X)
+        cupy_lin_op = LinearOperator(
+            (self._global_vec_len, self._global_vec_len), gmres_func
+        )
 
         if self.usePreco:
-            # print(f"gmres tol {self.gmresTol}")
             precond_lin_op = LinearOperator(
-                (initGMRES.shape[0], initGMRES.shape[0]), self.preconditionerBD
+                (self._global_vec_len, self._global_vec_len), self.preconditionerBD
             )
-            if torch.cuda.is_available():
-                Xn, info = gmres(
-                    cupy_lin_op,
-                    cp.asarray(rhs),
-                    rtol=self.gmresTol,
-                    maxiter=self.gmresMaxIter,
-                    M=precond_lin_op,
-                    x0=cp.asarray(initGMRES),
-                    callback=counter,
-                )
-            else:
-                Xn, info = gmres(
-                    cupy_lin_op,
-                    rhs,
-                    rtol=self.gmresTol,
-                    maxiter=self.gmresMaxIter,
-                    M=precond_lin_op,
-                    x0=initGMRES,
-                )
+        else:
+            precond_lin_op = None
+
+        rhs = self._rhs
+        if torch.cuda.is_available():
+            Xn, info = gmres(
+                cupy_lin_op,
+                self._torch_to_cupy(rhs),
+                rtol=self.gmresTol,
+                maxiter=self.gmresMaxIter,
+                M=precond_lin_op,
+                x0=self._torch_to_cupy(initGMRES),
+                callback=counter,
+            )
         else:
             Xn, info = gmres(
-                cupy_lin_op, cp.asarray(rhs), rtol=self.gmresTol, maxiter=self.gmresMaxIter
+                cupy_lin_op,
+                rhs.cpu().numpy(),
+                rtol=self.gmresTol,
+                maxiter=self.gmresMaxIter,
+                M=precond_lin_op,
+                x0=initGMRES.cpu().numpy(),
+                callback=counter,
             )
 
-        # print(f"gmres takes {counter.niter} iterations")
-        # print("After gmres", torch.cuda.memory_allocated())
-
         iflag = info != 0
-        iter = counter.niter
-        Xn = torch.as_tensor(Xn, dtype=torch.float32)
+        Xn = self._cupy_to_torch(Xn, dtype=torch.float32)
 
-        # --- Unstack results ---
+        N = self._N
         eta = None
         RS = None
-
-        Xn_reshaped = Xn.view(nv, 3, N)
-        X_ = Xn_reshaped[:, 0:2, :].reshape(nv, 2 * N).transpose(0, 1).clone()
+        Xn_reshaped = Xn.view(self.nv, 3, N)
+        X_ = Xn_reshaped[:, 0:2, :].reshape(self.nv, 2 * N).transpose(0, 1).clone()
         sigma_ = Xn_reshaped[:, 2, :].T.clone().to(dtype=torch.float64)
 
-        return X_, sigma_, eta, RS, iter, iflag
+        return X_, sigma_, eta, RS, counter.niter, iflag
 
-
-    def time_matvec(self, Xn, vesicle, vesicle_local):
-        """
-        Matrix-vector product for GMRES
-
-        Assumes no walls and no viscosity difference between vesicle and surrounding fluid
-        """
-        global matvecs
-        matvecs += 1
-        if isinstance(Xn, np.ndarray):
-            Xn = torch.from_numpy(Xn).to(self.device).double()
-        elif isinstance(Xn, cp.ndarray):
-            # Xn = torch.as_tensor(Xn).to(self.device).double()
-            Xn = torch.utils.dlpack.from_dlpack(Xn.toDlpack()).to(self.device).double()
-        else:
-            Xn = Xn.to(self.device).double()
+    def time_matvec(self, Xn):
+        Xn = self._cupy_to_torch(Xn, dtype=torch.float64)
 
         op = self.op
-        N = vesicle.N
+        vesicle = self._vesicle
+        vesicle_local = self._vesicle_local
+        N = self._N
 
-        device = Xn.device  # Use same device as input
-        dtype = Xn.dtype
-
-        valPos_local = torch.zeros((2 * N, self.chunk), dtype=dtype, device=device)
-
-        Xn_reshaped = Xn.view(vesicle.nv, 3, N)  # [nv, 3, N]
-        Xn_reshaped_local = Xn_reshaped[self.start : self.end].to(self.device)
+        Xn_reshaped = Xn.view(self.nv, 3, N)
+        Xn_reshaped_local = Xn_reshaped[self.start : self.end]
         Xm_local = (
             Xn_reshaped_local[:, 0:2, :]
             .reshape(self.chunk, 2 * N)
             .transpose(0, 1)
-            .clone()
+            .contiguous()
         )
-        sigmaM_local = Xn_reshaped_local[:, 2, :].T.clone()
+        sigmaM_local = Xn_reshaped_local[:, 2, :].T.contiguous()
 
         f_local = vesicle_local.tracJump(Xm_local, sigmaM_local)
         check_finite("f_local", f_local, self.rank)
-        alpha_local = (1 + vesicle_local.viscCont) / 2
 
         Gf_local = op.exactStokesSLdiag(vesicle_local, self.Galpert_local, f_local)
         check_finite("Gf_local", Gf_local, self.rank)
-        self.Galpert_local = self.Galpert_local.contiguous()
-        Galpert_gather = [
-            torch.zeros_like(self.Galpert_local) for _ in range(self.size)
-        ]
-        dist.all_gather(Galpert_gather, self.Galpert_local)
-        self.Galpert = torch.cat(Galpert_gather, dim=2)
-        check_finite("Galpert", self.Galpert, self.rank)
 
-        SLP = lambda X: op.exactStokesSLdiag(vesicle, self.Galpert, X)
-        f_gather = [torch.zeros_like(f_local) for _ in range(self.size)]
-        dist.all_gather(f_gather, f_local)
-        f = torch.cat(f_gather, dim=1)
+        dist.all_gather(self._gather_f_buf, f_local)
+        f = torch.cat(self._gather_f_buf, dim=1).contiguous()
         check_finite("f", f, self.rank)
 
+        SLP = lambda X: op.exactStokesSLdiag(vesicle, self.Galpert, X)
         Fslp_local = op.dist_nearSingInt_rbf(
             vesicle,
             f,
@@ -461,166 +414,110 @@ class TStepBiem:
             True,
             self.start,
             self.end,
-            self.rank
+            self.rank,
         )
         check_finite("Fslp_local", Fslp_local, self.rank)
 
-        valPos_local -= self.dt * Gf_local / alpha_local
-        valPos_local -= self.dt * Fslp_local / alpha_local
-
+        alpha_local = ((1.0 + vesicle_local.viscCont) / 2).to(
+            self.device, dtype=Gf_local.dtype
+        )
+        valPos_local = (
+            Xm_local
+            - self.dt * Gf_local / alpha_local
+            - self.dt * Fslp_local / alpha_local
+        )
         valTen = vesicle_local.surfaceDiv(Xm_local)
-        valPos_local += Xm_local
 
-        val_reshaped = torch.cat(
-            [valPos_local.reshape(2, N, self.chunk), valTen.reshape(1, N, self.chunk)],
-            dim=0,
-        ).reshape(3 * N, self.chunk)
-        val = val_reshaped.permute(1, 0).reshape(-1)
-
-        val_gather = [torch.zeros_like(val) for _ in range(self.size)]
-        dist.all_gather(val_gather, val)
-        val_global = torch.cat(val_gather, dim=0)
-
-        return (
-            cp.fromDlpack(torch.utils.dlpack.to_dlpack(val_global))
-            if torch.cuda.is_available()
-            else np.asarray(val_global)
+        val_local = (
+            torch.cat(
+                [
+                    valPos_local.reshape(2, N, self.chunk),
+                    valTen.reshape(1, N, self.chunk),
+                ],
+                dim=0,
+            )
+            .reshape(3 * N, self.chunk)
+            .permute(1, 0)
+            .reshape(-1)
+            .contiguous()
         )
 
-    def RSlets(X, center, stokeslet, rotlet):
-        """
-        Evaluate the velocity due to stokeslet and rotlet terms in 2D.
+        dist.all_gather(self._gather_val_buf, val_local)
+        val_global = torch.cat(self._gather_val_buf, dim=0).contiguous()
 
-        Args:
-            X         : Tensor of shape (2, N), evaluation points.
-            center    : Tensor of shape (2,), the center of the stokeslet/rotlet.
-            stokeslet: Tensor of shape (2,), the stokeslet vector.
-            rotlet   : Scalar (float or tensor), the rotlet strength.
-
-        Returns:
-            vel: Tensor of shape (2, N), velocity at each evaluation point.
-        """
-        # Separate x and y components
-        x, y = X[0], X[1]
-        cx, cy = center[0], center[1]
-
-        dx = x - cx
-        dy = y - cy
-        rho2 = dx**2 + dy**2
-
-        # Avoid division by zero
-        eps = 1e-14
-        rho2 = rho2 + eps
-
-        # Compute x-component of velocity
-        LogTerm_x = -0.5 * torch.log(rho2) * stokeslet[0]
-        rorTerm_x = (1.0 / rho2) * (dx * dx * stokeslet[0] + dx * dy * stokeslet[1])
-        RotTerm_x = (dy / rho2) * rotlet
-        velx = (1 / (4 * math.pi)) * (LogTerm_x + rorTerm_x) + RotTerm_x
-
-        # Compute y-component of velocity
-        LogTerm_y = -0.5 * torch.log(rho2) * stokeslet[1]
-        rorTerm_y = (1.0 / rho2) * (dy * dx * stokeslet[0] + dy * dy * stokeslet[1])
-        RotTerm_y = -(dx / rho2) * rotlet
-        vely = (1 / (4 * math.pi)) * (LogTerm_y + rorTerm_y) + RotTerm_y
-
-        # Combine components
-        vel = torch.stack([velx, vely], dim=0)
-        return vel
+        if torch.cuda.is_available():
+            return self._torch_to_cupy(val_global)
+        return val_global.cpu().numpy()
 
     def preconditionerBD(self, z):
-        if isinstance(z, np.ndarray):
-            z = torch.from_numpy(z).to(self.device).double()
-        elif isinstance(z, cp.ndarray):
-            z = torch.as_tensor(z, device=self.device).double()
-        else:
-            z = z.to(self.device).double()
+        z = self._cupy_to_torch(z, dtype=torch.float64)
 
-        N = self.bdiagVes["LU"].shape[1] // 3      # points per vesicle
-        chunk = self.chunk
-        start = self.start
-        end = self.end
+        N = self._N
         nv = self.nv
-
-        # Global vector is ordered by vesicle because of:
-        # torch.cat((Xstore, sigStore), dim=0).T.reshape(-1)
         zves = z[: 3 * N * nv].view(nv, 3 * N)
+        zves_local = zves[self.start : self.end].unsqueeze(-1)
 
-        # Take this rank's vesicles
-        zves_local = zves[start:end].unsqueeze(-1)   # (chunk, 3N, 1)
-
-        # Local batched solve
         val_local = torch.linalg.lu_solve(
-            self.bdiagVes["LU"],          # (chunk, 3N, 3N)
-            self.bdiagVes["pivots"],      # (chunk, 3N)
-            zves_local                    # (chunk, 3N, 1)
-        ).squeeze(-1)                     # (chunk, 3N)
-
+            self.bdiagVes["LU"],
+            self.bdiagVes["pivots"],
+            zves_local,
+        ).squeeze(-1)
         val_local_flat = val_local.reshape(-1).contiguous()
 
-        # Gather solved local chunks into a global vector
         gathered = [torch.empty_like(val_local_flat) for _ in range(self.size)]
         dist.all_gather(gathered, val_local_flat)
-
         val_global = torch.cat(gathered, dim=0).contiguous()
 
-        return cp.asarray(val_global) if torch.cuda.is_available() else val_global.cpu().numpy()
+        if torch.cuda.is_available():
+            return self._torch_to_cupy(val_global)
+        return val_global.cpu().numpy()
+
+    def RSlets(X, center, stokeslet, rotlet):
+        x, y = X[0], X[1]
+        cx, cy = center[0], center[1]
+        dx = x - cx
+        dy = y - cy
+        rho2 = dx**2 + dy**2 + 1e-14
+        LogTerm_x = -0.5 * torch.log(rho2) * stokeslet[0]
+        rorTerm_x = (dx * dx * stokeslet[0] + dx * dy * stokeslet[1]) / rho2
+        RotTerm_x = (dy / rho2) * rotlet
+        velx = (1 / (4 * math.pi)) * (LogTerm_x + rorTerm_x) + RotTerm_x
+        LogTerm_y = -0.5 * torch.log(rho2) * stokeslet[1]
+        rorTerm_y = (dy * dx * stokeslet[0] + dy * dy * stokeslet[1]) / rho2
+        RotTerm_y = -(dx / rho2) * rotlet
+        vely = (1 / (4 * math.pi)) * (LogTerm_y + rorTerm_y) + RotTerm_y
+        return torch.stack([velx, vely], dim=0)
 
     def wallsPrecond(o):
-        """
-        Computes the inverse of the double-layer potential matrix for Stokes flow
-        in a bounded domain. This is used as a wall preconditioner in vesicle simulations.
-
-        Args:
-            o: Object with attributes:
-                - walls: Contains geometry and panel data
-                - wallN0: Initial matrix block (torch.Tensor)
-                - wallDLP: Self and interaction terms (torch.Tensor)
-                - matFreeWalls: If False, store full inverse in `o.wallDLPandRSmat`
-
-        Returns:
-            Mat: Inverse of full wall interaction matrix
-        """
-
         walls = o.walls
         Nbd = walls.N
         nvbd = walls.nv
         oc = Curve()
-
         x, y = oc.getXY(walls.X)
         nory, norx = oc.getXY(walls.xt)
         nory = -nory
         sa = walls.sa
         cx, cy = oc.getXY(walls.center)
-
         Ntot = 2 * Nbd * nvbd
         Nstokes = 3 * (nvbd - 1)
-
         M11 = torch.zeros((Ntot, Ntot), dtype=torch.float64)
         M12 = torch.zeros((Ntot, Nstokes), dtype=torch.float64)
         M21 = torch.zeros((Nstokes, Ntot), dtype=torch.float64)
-
-        # Diagonal jump terms
         jump = -0.5
         M11[: 2 * Nbd, : 2 * Nbd] += o.wallN0[:, :, 0]
-
         for k in range(nvbd):
             istart = 2 * Nbd * k
             iend = istart + 2 * Nbd
             M11[istart:iend, istart:iend] += (
                 jump * torch.eye(2 * Nbd, dtype=torch.float64) + o.wallDLP[:, :, k]
             )
-
-        # Off-diagonal interactions
         for ktar in range(nvbd):
             itar = 2 * Nbd * ktar
             jtar = itar + 2 * Nbd
             K = list(range(ktar)) + list(range(ktar + 1, nvbd))
-
             for ksou in K:
                 isou = 2 * Nbd * ksou
                 jsou = isou + 2 * Nbd
-
                 xtar = x[:, ktar].unsqueeze(1).repeat(1, Nbd)
                 ytar = y[:, ktar].unsqueeze(1).repeat(1, Nbd)
                 xsou = x[:, ksou].unsqueeze(0).repeat(Nbd, 1)
@@ -628,7 +525,6 @@ class TStepBiem:
                 norxtmp = norx[:, ksou].unsqueeze(0).repeat(Nbd, 1)
                 norytmp = nory[:, ksou].unsqueeze(0).repeat(Nbd, 1)
                 satmp = sa[:, ksou].unsqueeze(0).repeat(Nbd, 1)
-
                 rho2 = (xtar - xsou) ** 2 + (ytar - ysou) ** 2
                 coeff = (
                     (1 / math.pi)
@@ -636,7 +532,6 @@ class TStepBiem:
                     * satmp
                     / rho2**2
                 )
-
                 D = torch.cat(
                     [
                         coeff * (xtar - xsou) ** 2,
@@ -646,10 +541,7 @@ class TStepBiem:
                     ],
                     dim=1,
                 ).reshape(2 * Nbd, 2 * Nbd) * (2 * math.pi / Nbd)
-
                 M11[itar:jtar, isou:jsou] = D
-
-        # M21 — integrals of densities
         for k in range(nvbd - 1):
             icol = 3 * k
             istart = 2 * Nbd * (k + 1)
@@ -664,93 +556,54 @@ class TStepBiem:
             M21[icol + 2, istart:iend] -= (
                 (2 * math.pi / Nbd) * sa[:, k + 1] * x[:, k + 1]
             )
-
-        # M12 — velocity from rotlets/stokeslets
         for k in range(nvbd - 1):
             for ktar in range(nvbd):
                 dx = x[:, ktar] - cx[k + 1]
                 dy = y[:, ktar] - cy[k + 1]
                 rho2 = dx**2 + dy**2
-
                 istart = 2 * Nbd * ktar
                 iend = istart + Nbd
                 base = 3 * k
-
                 M12[istart:iend, base] += (
                     1 / (4 * math.pi) * (-0.5 * torch.log(rho2) + dx * dx / rho2)
                 )
                 M12[istart + Nbd : iend + Nbd, base] += (
                     1 / (4 * math.pi) * (dx * dy / rho2)
                 )
-
                 M12[istart:iend, base + 1] += 1 / (4 * math.pi) * (dy * dx / rho2)
                 M12[istart + Nbd : iend + Nbd, base + 1] += (
                     1 / (4 * math.pi) * (-0.5 * torch.log(rho2) + dy * dy / rho2)
                 )
-
                 M12[istart:iend, base + 2] += dy / rho2
                 M12[istart + Nbd : iend + Nbd, base + 2] -= dx / rho2
-
-        # M22 — identity block for constraints
         M22 = -2 * math.pi * torch.eye(3 * (nvbd - 1), dtype=torch.float64)
-
-        # Stack full block matrix
         top = torch.cat([M11, M12], dim=1)
         bottom = torch.cat([M21, M22], dim=1)
         M = torch.cat([top, bottom], dim=0)
-
         if not o.matFreeWalls:
             o.wallDLPandRSmat = M
-
-        # Invert the matrix
-        Mat = torch.linalg.inv(M)
-
-        return Mat
+        return torch.linalg.inv(M)
 
     def bg_flow(self, X, Xwalls, *args, **kwargs):
-        """
-        Computes the velocity field at the points X. vInf is either background or wall velocity.
-        Flows are given by:
-            relaxation:     (0,0)
-            extensional:    (-x,y)
-            parabolic:      (k(1-y/r)^2,0)
-            taylorGreen:    (sin(x)cos(y),-cos(x)sin(y))
-            shear:          (ky,0)
-            choke:          poiseuille-like flow at intake and outtake
-            doublechoke:    same as choke
-            couette:        rotating boundary
-            doubleCouette   two rotating boundaries
-            tube            poiseuille flow in a tube
-        """
-
-        N = X.shape[0] // 2  # number of points per vesicle
-        nv = X.shape[1]  # number of vesicles
-
-        # Separate out x and y coordinates of vesicles
+        N = X.shape[0] // 2
+        nv = X.shape[1]
         x, y = X[:N, :], X[N:, :]
-
-        # Get speed
         speed = kwargs.get("Speed", 1.0)
-
         if "relaxation" in args:
             vInf = torch.zeros((2 * N, nv), dtype=X.dtype, device=X.device)
-
         elif "extensional" in args:
             vInf = torch.cat((-x, y), dim=0)
-
         elif "parabolic" in args:
             chanWidth = kwargs.get("chanWidth", 1.0)
             v_x = 1 - (y / chanWidth) ** 2
             v_y = torch.zeros_like(v_x)
             vInf = torch.cat((v_x, v_y), dim=0)
-
         elif "taylorGreen" in args:
             vortexSize = kwargs.get("vortexSize", 1.0)
             scale = math.pi / vortexSize
             v_x = torch.sin(x * scale) * torch.cos(y * scale)
             v_y = -torch.cos(x * scale) * torch.sin(y * scale)
             vInf = vortexSize * torch.cat((v_x, v_y), dim=0)
-
         elif "vortex" in args:
             chanWidth = kwargs.get("chanWidth", 2.5)
             vInf = torch.cat(
@@ -762,31 +615,24 @@ class TStepBiem:
                 ],
                 dim=0,
             )
-
         elif "shear" in args:
             v_x = y
             v_y = torch.zeros_like(y)
             vInf = torch.cat((v_x, v_y), dim=0)
-
         elif any(flow in args for flow in ["choke", "doublechoke", "choke2", "tube"]):
             xwalls = Xwalls[: Xwalls.shape[0] // 2, 0]
             ywalls = Xwalls[Xwalls.shape[0] // 2 :, 0]
             Nbd = xwalls.numel()
-
             vInf = torch.zeros((2 * Nbd, 1), dtype=X.dtype, device=X.device)
             ind = torch.abs(xwalls) > 0.8 * torch.max(xwalls)
-
             y_scaled = ywalls[ind] / torch.max(ywalls)
             mollifier = torch.exp(1 / (y_scaled**2 - 1))
             mollifier[torch.isinf(mollifier)] = 0
-            vx = mollifier / math.exp(-1)
-            vInf[ind, 0] = vx
-
+            vInf[ind, 0] = mollifier / math.exp(-1)
         elif "couette" in args:
             xwalls = Xwalls[: Xwalls.shape[0] // 2, :]
             ywalls = Xwalls[Xwalls.shape[0] // 2 :, :]
             Nbd = xwalls.shape[0]
-
             mean_y2 = torch.mean(ywalls[:, 1])
             mean_x2 = torch.mean(xwalls[:, 1])
             rot_x = -ywalls[:, 1] + mean_y2
@@ -798,17 +644,14 @@ class TStepBiem:
                 ),
                 dim=1,
             )
-
         elif "doubleCouette" in args:
             xwalls = Xwalls[: Xwalls.shape[0] // 2, :]
             ywalls = Xwalls[Xwalls.shape[0] // 2 :, :]
             Nbd = xwalls.shape[0]
-
             mean_y2 = torch.mean(ywalls[:, 1])
             mean_x2 = torch.mean(xwalls[:, 1])
             mean_y3 = torch.mean(ywalls[:, 2])
             mean_x3 = torch.mean(xwalls[:, 2])
-
             rot_2 = torch.cat((-ywalls[:, 1] + mean_y2, xwalls[:, 1] - mean_x2))
             rot_3 = torch.cat((ywalls[:, 2] - mean_y3, -xwalls[:, 2] + mean_x3))
             vInf = torch.cat(
@@ -819,10 +662,6 @@ class TStepBiem:
                 ),
                 dim=1,
             )
-
         else:
             raise ValueError("Unknown or missing flow type in bg_flow.")
-
-        # Scale the velocity
-        vInf *= speed
-        return vInf
+        return vInf * speed

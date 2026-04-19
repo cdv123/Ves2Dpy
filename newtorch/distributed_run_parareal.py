@@ -15,6 +15,7 @@ from distributed_parareal import PararealSolver
 from distributed_parareal_vesnet import VesNetSolver
 from distributed_parallel_solver import ParallelSolver, BIEMSolver
 from helper_functions import init_distributed
+from parse_args import parse_cli, modify_options_params
 
 torch.set_default_dtype(torch.float64)
 
@@ -93,66 +94,7 @@ if __name__ == "__main__":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         torch.set_default_device("cuda")
 
-    fileName = "./output_BIEM/parareal_output.bin"  # To save simulation data
-    # fileName = None
-
-    # Assume oc is your geometry utility class (like curve_py in MATLAB)
-    oc = Curve()  # You need to define this with required methods
-
-    # ------------------------------
-    # Create geometry for confinement
-    # ------------------------------
     prams = {}
-    prams["Nbd"] = 32
-    # prams['nvbd'] = 2
-    prams["nvbd"] = 0
-
-    t = torch.linspace(0, 2 * torch.pi, prams["Nbd"])  # end_point = False
-    rad1 = 1.0  # inner cylinder radius
-    rad2 = 2.0  # outer cylinder radius
-
-    # Outer and inner walls
-    x = torch.cat([rad2 * torch.cos(t), rad1 * torch.cos(-t)])
-    y = torch.cat([rad2 * torch.sin(t), rad1 * torch.sin(-t)])
-    # Xwalls = torch.vstack((x, y))
-    Xwalls = None
-
-    # ------------------------------
-    # Create vesicles
-    # ------------------------------
-
-    # Initial shape
-    # selected_one = [0]
-    # Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
-    Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
-    # Xics = Xics - Xics.mean()
-
-    sigma = None
-    X = torch.from_numpy(Xics).float().to(device)
-    X = interpft_vec(X, 128).to(device)
-    nv = X.shape[1]
-
-
-    # ------------------------------
-    # Simulation parameters and options
-    # ------------------------------
-    prams["N"] = X.shape[0] // 2
-    prams["nv"] = X.shape[1]
-    prams["dt"] = 1e-5
-    totalTime = 1000 * prams["dt"]
-    pararealTime = 500 * prams["dt"]
-    prams["T"] = pararealTime
-    prams["kappa"] = 1.0
-    prams["viscCont"] = torch.ones(prams["nv"])
-    prams["gmresTol"] = 1e-10
-    prams["areaLenTol"] = 1e-2
-    prams["vortexSize"] = 2.5
-    prams["chanWidth"] = 2.5
-    prams["farFieldSpeed"] = 400
-
-    prams["repStrength"] = 1e5
-    prams["minDist"] = 1.0 / 32
-
     options = {
         "farField": "taylorGreen",
         "repulsion": False,
@@ -162,6 +104,47 @@ if __name__ == "__main__":
         "matFreeWalls": False,
         "confined": False,
     }
+    args = parse_cli()
+
+    fileName, Xics = modify_options_params(args, options, prams)
+    if prams["nv"] == 1:
+        Xics = Xics - Xics.mean()
+
+    oc = Curve()  # You need to define this with required methods
+
+    # ------------------------------
+    # Create geometry for confinement
+    # ------------------------------
+    prams["Nbd"] = 32
+    prams["nvbd"] = 0
+
+    t = torch.linspace(0, 2 * torch.pi, prams["Nbd"])  # end_point = False
+    rad1 = 1.0  # inner cylinder radius
+    rad2 = 2.0  # outer cylinder radius
+
+    # Outer and inner walls
+    x = torch.cat([rad2 * torch.cos(t), rad1 * torch.cos(-t)])
+    y = torch.cat([rad2 * torch.sin(t), rad1 * torch.sin(-t)])
+    Xwalls = None
+
+    sigma = None
+    X = torch.from_numpy(Xics).float().to(device)
+    X = interpft_vec(X, prams["N"]).to(device)
+    nv = X.shape[1]
+
+    # ------------------------------
+    # Simulation parameters and options
+    # ------------------------------
+    totalTime = prams["T"] * prams["coarse_dt"]
+    pararealTime = prams["window_size"] * prams["coarse_dt"]
+    prams["T"] = pararealTime
+    prams["kappa"] = 1.0
+    prams["viscCont"] = torch.ones(prams["nv"])
+    prams["gmresTol"] = 1e-10
+    prams["areaLenTol"] = 1e-2
+
+    prams["repStrength"] = 1e5
+    prams["minDist"] = 1.0 / 32
 
     # ------------------------------
     # Initialize default values (if any missing)
@@ -203,15 +186,24 @@ if __name__ == "__main__":
         (torch.arange(0, prams["N"] // 2), torch.arange(-prams["N"] // 2, 0))
     ).to(X.device)  # .double()
 
-    numCores = 2
-    numCoresVesnet = 2
+    numCores = prams["nProcs"]
+    numCoresVesnet = numCores
+
+    # Window size should be divisible by number of cores
     prams["T"] /= numCores
     coarse_prams = prams.copy()
 
     # Use a larger time step size for coarse solver
-    coarse_prams["dt"] *= 1
+    coarse_prams["dt"] = prams["coarse_dt"]
 
-    coarseSolver = VesNetSolver(options, coarse_prams, Xwalls, X, comm_info, nv, numCoresVesnet)
+    if prams["use_vesnet"]:
+        coarseSolver = VesNetSolver(
+            options, coarse_prams, Xwalls, X, comm_info, nv, numCoresVesnet
+        )
+    else:
+        coarseSolver = BIEMSolver(
+            options, coarse_prams, Xwalls, X, comm_info, nv, numCoresVesnet
+        )
 
     parallelSolver = ParallelSolver(
         options, prams, Xwalls, numCores, comm_info.rank, comm_info.device

@@ -23,6 +23,7 @@ from tqdm import tqdm
 from tools.filter import interpft_vec
 import logging
 from poten import Poten
+from parse_args import parse_cli, modify_options_params
 
 torch.cuda.set_device(comm_info.device)
 torch.set_default_device(comm_info.device)
@@ -45,7 +46,6 @@ oc = Curve(logger)
 # fileName = './output_N128/linshi.bin'  # To save simulation data
 # fileName = './output_N128/ls.bin'  # To save simulation data
 # fileName = './output_N128/lsls.bin'  # To save simulation data
-fileName = "./output_N128/does_near_help_without.bin"  # To save simulation data
 # fileName = './output_N128/TG48.bin'  # To save simulation data
 
 
@@ -95,15 +95,20 @@ def set_bg_flow(bgFlow, speed):
 # bgFlow = 'shear'
 # speed = 2000
 # vinf = set_bg_flow(bgFlow, speed)
+args = parse_cli()
+params = {}
+options = {}
 
-bgFlow = "shear"
-speed = 400
+fileName, Xics = modify_options_params(args, options, params)
+
+bgFlow = options["farField"]
+speed = params["farFieldSpeed"]
 vinf = set_bg_flow(bgFlow, speed)
 
 
 # Time stepping
-dt = 1e-5  # Time step size
-Th = 100 * dt  # Time horizon
+dt = params["dt"]
+Th = params["T"] * dt  # Time horizon
 
 # Vesicle discretization
 N = 32  # Number of points to discretize vesicle
@@ -111,13 +116,9 @@ nlayers = 3
 rbf_upsample = -1
 
 
-selected_one = [0]
 # Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get('X')[:, selected_one]
-Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
-# Xics = Xics - Xics.mean()
-# Xics = init_data.get('Xic')
-# Xics = np.load("TG_new_start.npy")
-# Xics = loadmat("../3VesNearCheck.mat").get("X")
+if params["nv"] == 1:
+    Xics = Xics - Xics.mean()
 X0 = torch.from_numpy(Xics).to(device).float()
 
 

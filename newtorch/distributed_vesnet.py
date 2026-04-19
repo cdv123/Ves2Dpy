@@ -1,6 +1,7 @@
 # %%
 import torch
 from helper_functions import init_distributed
+
 comm_info = init_distributed()
 torch.cuda.set_device(comm_info.device)
 import numpy as np
@@ -27,11 +28,12 @@ from tools.filter import interpft, interpft_vec
 import logging
 from torch import distributed as dist
 from poten import Poten
+from parse_args import parse_cli, modify_options_params
 
 torch.cuda.set_device(comm_info.device)
 torch.set_default_device(comm_info.device)
 
-device = comm_info.device 
+device = comm_info.device
 cur_dtype = torch.float32
 
 logger = logging.getLogger(__name__)
@@ -49,7 +51,6 @@ oc = Curve(logger)
 # fileName = './output_N128/linshi.bin'  # To save simulation data
 # fileName = './output_N128/ls.bin'  # To save simulation data
 # fileName = './output_N128/lsls.bin'  # To save simulation data
-fileName = "./output_N128/does_near_help_without.bin"  # To save simulation data
 # fileName = './output_N128/TG48.bin'  # To save simulation data
 
 
@@ -99,15 +100,19 @@ def set_bg_flow(bgFlow, speed):
 # bgFlow = 'shear'
 # speed = 2000
 # vinf = set_bg_flow(bgFlow, speed)
+args = parse_cli
+options = {}
+params = {}
+fileName, Xics = modify_options_params(args, options, params)
 
-bgFlow = "shear"
-speed = 400
+bgFlow = options["farField"]
+speed = params["farFieldSpeed"]
 vinf = set_bg_flow(bgFlow, speed)
 
 
 # Time stepping
-dt = 1e-5  # Time step size
-Th = 100 * dt  # Time horizon
+dt = params["dt"]  # Time step size
+Th = params["T"] * dt  # Time horizon
 
 # Vesicle discretization
 N = 128  # Number of points to discretize vesicle
@@ -115,19 +120,10 @@ nlayers = 3
 rbf_upsample = -1
 
 
-# Xics = np.load("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/shear_N32.npy") ### INIT SHAPES FROM THE DATA SET
-# Xics = np.load("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/48vesTG_N32.npy") ### INIT SHAPES FROM THE DATA SET
-# Xics = loadmat("../48vesiclesInTG_N128.mat").get('Xic') ### INIT SHAPES FROM THE DATA SET
-# Xics = loadmat("/work/09452/alberto47/ls6/vesToPY/Ves2Dpy_N32/ManyVesICsTaylorGreen/nv504IC.mat").get('X')
-selected_one = [0]
-# Xics = loadmat("../../npy-files/VF25_TG128Ves.mat").get('X')[:, selected_one]
-Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
-# Xics = Xics - Xics.mean()
-# Xics = init_data.get('Xic')
-# Xics = np.load("TG_new_start.npy")
-# Xics = loadmat("../3VesNearCheck.mat").get("X")
-X0 = torch.from_numpy(Xics).to(device).float()
+if params["nv"] == 1:
+    Xics = Xics - Xics.mean()
 
+X0 = torch.from_numpy(Xics).to(device).float()
 
 if X0.shape[0] != 2 * N:
     X0 = interpft_vec(X0, N)
@@ -228,7 +224,7 @@ mlarm.relaxNetwork.model.eval()
 mlarm.tenSelfNetwork.model.eval()
 mlarm.tenAdvNetwork.model.eval()
 mlarm.mergedAdvNetwork.model.eval()
-#mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="reduce-overhead")
+# mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="reduce-overhead")
 # mlarm.advNetwork.model  = torch.compile(mlarm.advNetwork.model,  mode="max-autotune")
 
 print("default dtype:", torch.get_default_dtype())
@@ -237,15 +233,15 @@ print("relax param dtype:", next(mlarm.relaxNetwork.model.parameters()).dtype)
 print("tenSelf param dtype:", next(mlarm.tenSelfNetwork.model.parameters()).dtype)
 print("tenAdv param dtype:", next(mlarm.tenAdvNetwork.model.parameters()).dtype)
 
-#mlarm.relaxNetwork.model = torch.compile(
+# mlarm.relaxNetwork.model = torch.compile(
 #    mlarm.relaxNetwork.model, mode="reduce-overhead"
-#)
-#mlarm.tenSelfNetwork.model = torch.compile(
+# )
+# mlarm.tenSelfNetwork.model = torch.compile(
 #    mlarm.tenSelfNetwork.model, mode="reduce-overhead"
-#)
-#mlarm.tenAdvNetwork.model = torch.compile(
+# )
+# mlarm.tenAdvNetwork.model = torch.compile(
 #    mlarm.tenAdvNetwork.model, mode="reduce-overhead"
-#)
+# )
 # print(type(mlarm.nearNetwork))
 
 area0, len0 = oc.geomProp(X)[1:]
@@ -328,10 +324,11 @@ for it in tqdm(range(int(Th // dt))):
 
     ## Save data
     if comm_info.rank == 0:
-        output = np.concatenate(([currtime], X.cpu().numpy().T.flatten())).astype("float64")
+        output = np.concatenate(([currtime], X.cpu().numpy().T.flatten())).astype(
+            "float64"
+        )
         with open(fileName, "ab") as fid:
             output.tofile(fid)
 
 torch.cuda.synchronize()
 torch.cuda.cudart().cudaProfilerStop()
-

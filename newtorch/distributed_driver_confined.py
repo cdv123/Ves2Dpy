@@ -10,16 +10,18 @@ import numpy as np
 from curve_batch_compile import Curve
 from capsules import capsules
 import time
-from distributed_tstep_biem import TStepBiem
+from distributed_tstep_biem_rewritten import TStepBiem
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
 from torch.profiler import profile, ProfilerActivity
+from parse_args import parse_cli, modify_options_params
 
 
 rank = comm_info.rank
 size = comm_info.numProcs
+
 
 def initVes2D(options=None, prams=None):
     """
@@ -93,9 +95,21 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if torch.cuda.is_available():
     torch.set_default_device(comm_info.device)
 
+prams = {}
+options = {
+    "farField": "taylorGreen",
+    "repulsion": False,
+    "correctShape": True,
+    "reparameterization": True,
+    "usePreco": True,
+    "matFreeWalls": False,
+    "confined": False,
+}
 
-fileName = "./output_BIEM/shear.bin"  # To save simulation data
-
+args = parse_cli()
+fileName, Xics = modify_options_params(args, options, prams)
+if prams["nv"] == 1:
+    Xics = Xics - Xics.mean()
 
 # Assume oc is your geometry utility class (like curve_py in MATLAB)
 oc = Curve()  # You need to define this with required methods
@@ -103,7 +117,6 @@ oc = Curve()  # You need to define this with required methods
 # ------------------------------
 # Create geometry for confinement
 # ------------------------------
-prams = {}
 prams["Nbd"] = 32
 prams["nvbd"] = 0
 # prams["nvbd"] = 0
@@ -123,44 +136,21 @@ Xwalls = None
 # ------------------------------
 
 # Initial shape
-# selected_one = [0]
-# Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")[:, selected_one]
-Xics = loadmat("../../npy-files/VF25_TG32Ves.mat").get("X")
-# Xics = Xics - Xics.mean()
 
 sigma = None
 X = torch.from_numpy(Xics).float().to(device)
-X = interpft_vec(X, 128).to(device)
+X = interpft_vec(X, prams["N"]).to(device)
 
 
 # ------------------------------
 # Simulation parameters and options
 # ------------------------------
-prams["N"] = X.shape[0] // 2
-prams["nv"] = X.shape[1]
-prams["dt"] = 1e-5
-# prams['T'] = 50000 * prams['dt']
-prams["T"] = 100 * prams["dt"]
 prams["kappa"] = 1.0
 prams["viscCont"] = torch.ones(prams["nv"])
 prams["gmresTol"] = 1e-10
 prams["areaLenTol"] = 1e-2
-prams["vortexSize"] = 2.5
-prams["chanWidth"] = 2.5
-prams["farFieldSpeed"] = 400
-
 prams["repStrength"] = 1e5
 prams["minDist"] = 1.0 / 32
-
-options = {
-    "farField": "taylorGreen",
-    "repulsion": False,
-    "correctShape": True,
-    "reparameterization": True,
-    "usePreco": True,
-    "matFreeWalls": False,
-    "confined": False,
-}
 
 # ------------------------------
 # Initialize default values (if any missing)
@@ -213,6 +203,11 @@ time_ = 0.0
 modes = torch.concatenate(
     (torch.arange(0, prams["N"] // 2), torch.arange(-prams["N"] // 2, 0))
 ).to(X.device)  # .double()
+if prams["nv"] % size != 0:
+    raise ValueError(
+        f"nv={prams['nv']} must be divisible by world_size={size} for distributed_tstep_biem_rewritten"
+    )
+
 print("GMRES max iter:", prams["gmresMaxIter"])
 print("is cuda available:", torch.cuda.is_available())
 
