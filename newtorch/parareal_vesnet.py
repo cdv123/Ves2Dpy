@@ -3,13 +3,84 @@ import logging
 from tstep_biem import TStepBiem
 from curve_batch_compile import Curve
 from poten import Poten
-from wrapper_MLARM_batch_compile_N128 import MLARM_manyfree_py
+from wrapper_MLARM_batch_compile_N128 import MLARM_manyfree_py as MLARM_N128
+from wrapper_MLARM_batch_compile_N32 import MLARM_manyfree_py as MLARM_N32
 from helper_functions import set_bg_flow
 import numpy as np
 
+norms_N128= {
+    "adv_net_input": "../../files2runVes2Dpy/2024Oct_adv_fft_tot_in_para.npy",
+    "adv_net_output": "../../files2runVes2Dpy/2024Oct_adv_fft_tot_out_para.npy",
+    "relax_net_input": np.array(
+        [
+            -8.430413700466488e-09,
+            0.06278684735298157,
+            6.290720477863943e-08,
+            0.13339413702487946,
+        ]
+    ),
+    "relax_net_output_norm": np.array(
+        [
+            -2.884585348361668e-10,
+            0.00020574081281665713,
+            -5.137390512999218e-10,
+            0.0001763451291481033,
+        ]
+    ),
+    "nearNetInputNorm" : "../../files2runVes2Dpy/in_param_disth_allmode.npy",
+    "nearNetOutputNorm" :"../../files2runVes2Dpy/out_param_disth_allmode.npy",
+    "tenSelfNetInputNorm" : np.array(
+        [
+            0.00017108717293012887,
+            0.06278623640537262,
+            0.002038202714174986,
+            0.13337858021259308,
+        ]
+    ),
+    "tenSelfNetOutputNorm" : np.array([337.7627868652344, 466.6429138183594]),
+
+    "tenAdvNetInputNorm" : "../../files2runVes2Dpy/2024Oct_advten_in_para_allmodes.npy",
+    "tenAdvNetOutputNorm" : "../../files2runVes2Dpy/2024Oct_advten_out_para_allmodes.npy"
+}
+
+norms_N32: {
+    "adv_net_input_norm" : "../../files2runVes2Dpy/2024Oct_adv_fft_tot_in_para.npy",
+    "adv_net_output_norm" : "../../files2runVes2Dpy/2024Oct_adv_fft_tot_out_para.npy",
+    "relax_net_input_norm" : np.array(
+    [
+        -8.430413700466488e-09,
+        0.06278684735298157,
+        6.290720477863943e-08,
+        0.13339413702487946,
+    ]
+    ),
+    "relax_net_output_norm" : np.array(
+    [
+        -2.884585348361668e-10,
+        0.00020574081281665713,
+        -5.137390512999218e-10,
+        0.0001763451291481033,
+    ]
+    ),
+    "nearNetInputNorm" : "../../files2runVes2Dpy/in_param_disth_allmode.npy",
+    "nearNetOutputNorm" : "../../files2runVes2Dpy/out_param_disth_allmode.npy",
+    "tenSelfNetInputNorm" : np.array(
+    [
+        0.00017108717293012887,
+        0.06278623640537262,
+        0.002038202714174986,
+        0.13337858021259308,
+    ]
+    ),
+    "tenSelfNetOutputNorm" : np.array([337.7627868652344, 466.6429138183594]),
+
+    "tenAdvNetInputNorm" : "../../files2runVes2Dpy/2024Oct_advten_in_para_allmodes.npy",
+    "tenAdvNetOutputNorm" : "../../files2runVes2Dpy/2024Oct_advten_out_para_allmodes.npy"
+}
+
 
 class VesNetSolver:
-    def __init__(self, options, params, Xwalls, initPositions):
+    def __init__(self, options, params, Xwalls, initPositions, use_N128=True):
         torch.set_default_dtype(torch.float32)
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         cur_dtype = torch.float32
@@ -70,7 +141,7 @@ class VesNetSolver:
         logger.setLevel(logging.INFO)
         rbf_upsample = -1
 
-        self.mlarm = MLARM_manyfree_py(
+        self.mlarm = MLARM_N128(
             params["dt"],
             vinf,
             self.oc,

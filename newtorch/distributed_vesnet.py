@@ -100,7 +100,7 @@ def set_bg_flow(bgFlow, speed):
 # bgFlow = 'shear'
 # speed = 2000
 # vinf = set_bg_flow(bgFlow, speed)
-args = parse_cli
+args = parse_cli()
 options = {}
 params = {}
 fileName, Xics = modify_options_params(args, options, params)

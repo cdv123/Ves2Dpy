@@ -137,6 +137,7 @@ if __name__ == "__main__":
     # ------------------------------
     totalTime = prams["T"] * prams["coarse_dt"]
     pararealTime = prams["window_size"] * prams["coarse_dt"]
+    print(pararealTime)
     prams["T"] = pararealTime
     prams["kappa"] = 1.0
     prams["viscCont"] = torch.ones(prams["nv"])

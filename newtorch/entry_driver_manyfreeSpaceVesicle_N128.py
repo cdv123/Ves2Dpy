@@ -13,12 +13,6 @@ from torch.profiler import profile, ProfilerActivity
 torch._dynamo.reset()
 # from curve_batch import Curve
 from curve_batch_compile import Curve
-print(torch.cuda.get_device_name(torch.cuda.current_device()))
-print(torch.version.hip)
-print(torch.cuda.is_available())
-print(torch.cuda.get_device_name(0))
-print(torch.cuda.get_device_properties(0))
-
 from wrapper_MLARM_batch_compile_N128 import MLARM_manyfree_py
 from math import sqrt
 import time
@@ -30,7 +24,6 @@ import logging
 from poten import Poten
 
 torch.cuda.synchronize()
-torch.cuda.cudart().cudaProfilerStart()
 
 
 cur_dtype = torch.float32
@@ -95,14 +88,14 @@ def set_bg_flow(bgFlow, speed):
 # speed = 2000
 # vinf = set_bg_flow(bgFlow, speed)
 
-bgFlow = 'shear'
-speed = 2000
+bgFlow = 'taylorGreen'
+speed = 400
 vinf = set_bg_flow(bgFlow, speed)
 
 
 # Time stepping
-dt = 4e-6  # Time step size
-Th = 2500 * dt # Time horizon
+dt = 1e-5  # Time step size
+Th = 200 * dt # Time horizon
 
 # Vesicle discretization
 N = 128  # Number of points to discretize vesicle
@@ -234,6 +227,7 @@ print(f"using 3 layers, {mlarm.rbf_upsample} upsampling, saved as {fileName}")
 #    mode="reduce-overhead"
 #)
 
+print("DEVICE", device)
 #with torch.inference_mode():
 for it in tqdm(range(int(Th//dt))): 
 #for it in range(20): 
@@ -243,7 +237,6 @@ for it in tqdm(range(int(Th//dt))):
     #X, Ten = mlarm.time_step_many(X, Ten)
     with torch.no_grad():
         X, Ten = mlarm.time_step_many_noinfo(X, Ten, nlayers)
-    print(X)
         #X, Ten = mlarm.time_step_many_noinfo_exactVelLayer(X, Ten, nlayers)
     ## np.save(f"shape_t{currtime}.npy", X)
     #tEnd = time.time()
@@ -270,5 +263,3 @@ for it in tqdm(range(int(Th//dt))):
     with open(fileName, 'ab') as fid:
         output.tofile(fid)
 
-torch.cuda.synchronize()
-torch.cuda.cudart().cudaProfilerStop()

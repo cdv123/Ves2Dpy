@@ -6,6 +6,7 @@ from distributed_wrapper_MLARM_batch_compile_N128 import MLARM_manyfree_py
 from helper_functions import set_bg_flow
 from torch import distributed as dist
 import numpy as np
+from tqdm import tqdm
 
 
 class VesNetSolver:
@@ -177,8 +178,7 @@ class VesNetSolver:
         print("Vesnet Solver Sweep")
         print("Number of steps:", num_steps)
 
-        for i in range(num_steps):
-            print("Time step", i)
+        for i in tqdm(range(num_steps)):
             start_time += self.params["dt"]
 
             with torch.no_grad():

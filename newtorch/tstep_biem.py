@@ -192,7 +192,6 @@ class TStepBiem:
         Advances the solution one timestep using implicit vesicle-vesicle interactions.
         """
         vesicle = capsules(Xstore, sigStore, None, self.kappa, self.viscCont)
-        # print("After vesicle", torch.cuda.memory_allocated())
 
         N = Xstore.shape[0] // 2  # Number of points per vesicle
         nv = Xstore.shape[1]  # Number of vesicles
@@ -401,10 +400,6 @@ class TStepBiem:
         global matvecs
         matvecs = 0
 
-        print("Xstore device:", Xstore.device)
-        print("rhs device:", rhs.device)
-        print("Galpert device:", self.Galpert.device if isinstance(self.Galpert, torch.Tensor) else type(self.Galpert))
-
         gmres_func = lambda X: self.time_matvec(X, vesicle)
         cupy_lin_op = LinearOperator(
             (initGMRES.shape[0], initGMRES.shape[0]), gmres_func
@@ -421,7 +416,7 @@ class TStepBiem:
                 Xn, info = gmres(
                     cupy_lin_op,
                     cp.asarray(rhs),
-                    tol=self.gmresTol,
+                    rtol=self.gmresTol,
                     maxiter=self.gmresMaxIter,
                     M=precond_lin_op,
                     x0=cp.asarray(initGMRES),
@@ -438,7 +433,7 @@ class TStepBiem:
                 )
         else:
             Xn, info = gmres(
-                cupy_lin_op, cp.asarray(rhs), tol=self.gmresTol, maxiter=self.gmresMaxIter
+                cupy_lin_op, cp.asarray(rhs), rtol=self.gmresTol, maxiter=self.gmresMaxIter
             )
 
         # print(f"gmres takes {counter.niter} iterations")

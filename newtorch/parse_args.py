@@ -6,13 +6,15 @@ PARAM_DEFAULTS = {
     "dt": 1e-5,
     "T": 200,
     "N": 128,
-    "nv": 1,
+    "nv": 32,
     "pr": 1,
     "farFieldSpeed": 400,
     "chanWidth": 2.5,
     "vortexSize": 2.5,
     "coarse_dt": 1e-5,
     "nProcs": 1,
+    "input": "../../npy-files/VF25_TG32Ves.mat",
+    "output": "output_BIEM/test.bin"
 }
 
 ARG_TO_PARAM = {
@@ -26,6 +28,8 @@ ARG_TO_PARAM = {
     "vs": "vortexSize",
     "coarse_dt": "coarse_dt",
     "nProcs": "nProcs",
+    "input": "input",
+    "output": "output"
 }
 
 
@@ -53,7 +57,7 @@ def parse_cli():
     parser.add_argument("--speed", type=float, help="Far field speed")
 
     # --- IO / runtime ---
-    parser.add_argument("--input", type=str, required=True, help="Input .mat file")
+    parser.add_argument("--input", type=str, help="Input .mat file")
     parser.add_argument("--output", type=str, help="Output file")
     parser.add_argument(
         "--use_vesnet", action="store_true", help="Use VesNet with parareal"
@@ -76,16 +80,17 @@ def modify_options_params(args, options, params):
             params[param_name] = PARAM_DEFAULTS[param_name]
 
     # Derived default depends on T
-    params["window_size"] = args.wT if args.wT is not None else min(200, params["T"])
+    params["window_size"] = args.wT if args.wT is not None else min(500, params["T"])
 
     # Flags
     params["use_vesnet"] = args.use_vesnet
+    params["use_vesnet"] = False
 
     # Options
     options["farField"] = args.farField if args.farField is not None else "shear"
 
     # IO
-    file_name = args.output
-    Xics = loadmat(args.input).get("X")[:, : params["nv"]]
+    file_name = params["output"] 
+    Xics = loadmat(params["input"]).get("X")[:, : params["nv"]]
 
     return file_name, Xics

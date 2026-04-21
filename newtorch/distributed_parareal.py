@@ -53,6 +53,7 @@ class PararealSolver:
         )
 
         for _ in range(pararealIter):
+            print("pararealIter")
             parallelCorrections, self.parallelCorrectionsSigma = self.parallelSweep(
                 latestVesicles, parallelCorrections
             )

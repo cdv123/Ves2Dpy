@@ -10,13 +10,14 @@ import numpy as np
 from curve_batch_compile import Curve
 from capsules import capsules
 import time
-from distributed_tstep_biem_rewritten import TStepBiem
+from distributed_tstep_biem_scaled import TStepBiem
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
 from torch.profiler import profile, ProfilerActivity
 from parse_args import parse_cli, modify_options_params
+torch.set_default_dtype(torch.float64)
 
 
 rank = comm_info.rank
@@ -145,6 +146,7 @@ X = interpft_vec(X, prams["N"]).to(device)
 # ------------------------------
 # Simulation parameters and options
 # ------------------------------
+prams["T"] = prams["T"] * prams["dt"]
 prams["kappa"] = 1.0
 prams["viscCont"] = torch.ones(prams["nv"])
 prams["gmresTol"] = 1e-10
@@ -183,7 +185,7 @@ if options["confined"]:
 # ------------------------------
 # Initialize variables
 # ------------------------------
-sigma = torch.zeros(prams["N"], prams["nv"]) if sigma is None else sigma
+sigma = torch.zeros(prams["N"], prams["nv"], dtype=torch.float64) if sigma is None else sigma
 eta = torch.zeros(2 * prams["Nbd"], prams["nvbd"])
 RS = torch.zeros(3, prams["nvbd"])
 
@@ -218,6 +220,7 @@ print("RS shape: ", RS.shape)
 
 for step in tqdm(range(int(prams["T"] / prams["dt"]))):
     # Perform time step
+    #print(X.dtype, sigma.dtype)
     Xnew, sigma, eta, RS, iter_, iflag = tt.time_step(X, sigma, eta, RS)
     sigma = torch.zeros(prams["N"], prams["nv"]) if sigma is None else sigma
     eta = torch.zeros(2 * prams["Nbd"], prams["nvbd"])

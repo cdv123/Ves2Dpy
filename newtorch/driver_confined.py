@@ -131,7 +131,7 @@ prams["N"] = X.shape[0] // 2
 prams["nv"] = X.shape[1]
 prams["dt"] = 1e-5
 # prams['T'] = 50000 * prams['dt']
-prams["T"] = 5000 * prams["dt"]
+prams["T"] = 200 * prams["dt"]
 prams["kappa"] = 1.0
 prams["viscCont"] = torch.ones(prams["nv"])
 prams["gmresTol"] = 1e-10
@@ -211,6 +211,7 @@ print("X shape: ", X.shape)
 print("sigma shape: ", sigma.shape)
 print("eta shape: ", eta.shape)
 print("RS shape: ", RS.shape)
+print(X.shape)
 
 for step in tqdm(range(int(prams["T"] / prams["dt"]))):
     # Perform time step

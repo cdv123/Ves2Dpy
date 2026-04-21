@@ -9,6 +9,7 @@ from tstep_biem import TStepBiem
 from curve_batch_compile import Curve
 import numpy as np
 from torch import distributed as dist
+from tqdm import tqdm
 
 _worker: Optional["WorkerState"] = None
 
@@ -50,7 +51,7 @@ class BIEMSolver:
         num_steps = int(self.finalTime / self.params["dt"])
         print("Number of steps:", num_steps)
 
-        for _ in range(num_steps):
+        for _ in tqdm(range(num_steps)):
             start_time += self.params["dt"]
             positionsNew, newSigma, self.eta, self.RS, _, _ = self.tt.time_step(
                 positions, newSigma, self.eta, self.RS

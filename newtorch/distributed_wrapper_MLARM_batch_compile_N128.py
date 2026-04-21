@@ -375,6 +375,9 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
                 velx_imag_local,
                 vely_imag_local,
                 standardizationValues_local,
+                xlayers_local,
+                ylayers_local,
+                nlayers,
                 first=True,
             )
         )
@@ -417,6 +420,9 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             velx_imag_local,
             vely_imag_local,
             standardizationValues_local,
+            xlayers_local,
+            ylayers_local,
+            nlayers,
             first=False,
         )
 
@@ -662,6 +668,105 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         return velx_, vely_
 
+    def _build_local_rbf_cholesky(self, xlayers_local, ylayers_local, nlayers):
+        N = xlayers_local.shape[0]
+        nv_local = xlayers_local.shape[2]
+
+        if self.rbf_upsample <= 2:
+            const = 0.0132
+        else:
+            raise NotImplementedError("rbf_upsample > 2 is not supported here")
+
+        if self.rbf_upsample == 2:
+            xlayers_local = interpft(xlayers_local.reshape(N, -1), N * 2).reshape(
+                N * 2, nlayers, nv_local
+            )
+            ylayers_local = interpft(ylayers_local.reshape(N, -1), N * 2).reshape(
+                N * 2, nlayers, nv_local
+            )
+
+        all_X_local = torch.concat(
+            (xlayers_local.reshape(-1, 1, nv_local), ylayers_local.reshape(-1, 1, nv_local)),
+            dim=1,
+        )
+        all_X_local = all_X_local / const
+        matrices_local = torch.exp(
+            -torch.sum((all_X_local[:, None] - all_X_local[None, ...]) ** 2, dim=-2)
+        )
+        matrices_local += (
+            torch.eye(all_X_local.shape[0], device=self.device, dtype=xlayers_local.dtype)
+            .unsqueeze(-1)
+            .expand(-1, -1, nv_local)
+            * 1e-6
+        )
+        L_local = torch.linalg.cholesky(matrices_local.permute(2, 0, 1))
+        return xlayers_local, ylayers_local, L_local
+
+    def _near_field_correction_local(
+        self,
+        vesicle,
+        info,
+        L,
+        far_field_local,
+        velx,
+        vely,
+        xlayers,
+        ylayers,
+        nlayers,
+    ):
+        if len(info[0]) == 0 or len(info[1]) == 0:
+            return
+
+        N = vesicle.N
+        nv = vesicle.nv
+        ntar = self.end - self.start
+
+        all_points = torch.concat(
+            (
+                vesicle.X[:N, self.start : self.end].T.reshape(-1, 1),
+                vesicle.X[N:, self.start : self.end].T.reshape(-1, 1),
+            ),
+            dim=1,
+        )
+
+        if self.rbf_upsample <= 2:
+            const = 0.0132
+        else:
+            raise NotImplementedError("rbf_upsample > 2 is not supported here")
+
+        all_X = torch.concat(
+            (xlayers.reshape(-1, 1, nv), ylayers.reshape(-1, 1, nv)), dim=1
+        )
+        all_X = all_X / const
+
+        rhs = torch.concat((velx.reshape(-1, 1, nv), vely.reshape(-1, 1, nv)), dim=1)
+        y = torch.linalg.solve_triangular(L, rhs.permute(2, 0, 1), upper=False)
+        coeffs = torch.linalg.solve_triangular(L.permute(0, 2, 1), y, upper=True)
+
+        id1_, id2_ = info
+        points_per_ves = all_X.shape[0]
+        id2_ = id2_[:, None] + torch.arange(0, points_per_ves * nv, nv, device=id2_.device)
+        id2_ = id2_.reshape(-1)
+        id1_ = id1_[:, None].expand(-1, points_per_ves).reshape(-1)
+
+        sp_matrix = torch.sparse_coo_tensor(
+            torch.vstack((id1_, id2_)),
+            torch.exp(
+                -torch.norm(
+                    all_points[id1_] / const
+                    - all_X.permute(0, 2, 1).reshape(-1, 2)[id2_, :],
+                    dim=-1,
+                )
+                ** 2
+            ),
+            size=(N * ntar, points_per_ves * nv),
+        )
+        correction = torch.sparse.mm(
+            sp_matrix, coeffs.permute(1, 0, 2).reshape(nv * points_per_ves, 2)
+        )
+        correction = correction.view(ntar, N, 2).permute(2, 1, 0).reshape(2 * N, ntar)
+        far_field_local += correction
+
     def computeStokesInteractions_noinfo(
         self,
         vesicle,
@@ -675,8 +780,20 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         velx_imag_local,
         vely_imag_local,
         standardizationValues_local,
+        xlayers_local,
+        ylayers_local,
+        nlayers,
         first: bool,
     ):
+        velx_local, vely_local = self.buildVelocityInNear(
+            trac_jump_local + repForce_local,
+            velx_real_local,
+            vely_real_local,
+            velx_imag_local,
+            vely_imag_local,
+            standardizationValues_local,
+            nlayers,
+        )
         rep_velx_local, rep_vely_local = self.buildVelocityInNear(
             repForce_local,
             velx_real_local[..., 2:3],
@@ -686,6 +803,33 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             standardizationValues_local,
             1,
         )
+
+        xlayers_local, ylayers_local, L_local = self._build_local_rbf_cholesky(
+            xlayers_local, ylayers_local, nlayers
+        )
+
+        velx_gather = [torch.zeros_like(velx_local, device=self.device) for _ in range(self.size)]
+        vely_gather = [torch.zeros_like(vely_local, device=self.device) for _ in range(self.size)]
+        xlayers_gather = [torch.zeros_like(xlayers_local, device=self.device) for _ in range(self.size)]
+        ylayers_gather = [torch.zeros_like(ylayers_local, device=self.device) for _ in range(self.size)]
+        L_gather = [torch.zeros_like(L_local, device=self.device) for _ in range(self.size)]
+
+        velx_local = velx_local.contiguous()
+        vely_local = velx_local.contiguous()
+        xlayers_local = xlayers_local.contiguous()
+        ylayers_local = ylayers_local.contiguous()
+        L_local = L_local.contiguous()
+
+        dist.all_gather(velx_gather, velx_local)
+        dist.all_gather(vely_gather, vely_local)
+        dist.all_gather(xlayers_gather, xlayers_local)
+        dist.all_gather(ylayers_gather, ylayers_local)
+        dist.all_gather(L_gather, L_local)
+        velx = torch.cat(velx_gather, dim=2)
+        vely = torch.cat(vely_gather, dim=2)
+        xlayers = torch.cat(xlayers_gather, dim=2)
+        ylayers = torch.cat(ylayers_gather, dim=2)
+        L = torch.cat(L_gather, dim=0)
 
         totalForce_local = trac_jump_local + repForce_local
         N = vesicle.N
@@ -717,7 +861,6 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         else:
             num_parts = 1
 
-        # start.record()
         if first:
             fn = allExactStokesSLTarget_compare1
             far_fields = []
@@ -738,14 +881,12 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
             far_field_1 = torch.cat(far_fields, dim=1)
             info_stokes = tuple(torch.cat(parts, dim=0) for parts in info_stokes_parts)
-            id1 = info_stokes[2] * N + info_stokes[1]
+            id1_local = (info_stokes[2] - self.start) * N + info_stokes[1]
             id2 = info_stokes[0] + 1 * (info_stokes[0] >= info_stokes[2])
-            info_rbf = (id1, id2)
+            info_rbf = (id1_local, id2)
 
         else:
-            # May need to sync info_stokes before this
             fn = allExactStokesSLTarget_compare2
-
             far_fields = []
 
             for start, end in iter_blocks(self.start, self.end, num_parts):
@@ -764,6 +905,10 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
                 far_fields.append(far_field)
 
             far_field_1 = torch.cat(far_fields, dim=1)
+
+        self._near_field_correction_local(
+            vesicle, info_rbf, L, far_field_1, velx, vely, xlayers, ylayers, nlayers
+        )
 
         selfRepVel = torch.concat(
             (rep_velx_local.squeeze(1), rep_vely_local.squeeze(1)), dim=0
@@ -1055,3 +1200,4 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         Xrot[: len(X) // 2] = xrot + rotCent[0] + transXY[0]
         Xrot[len(X) // 2 :] = yrot + rotCent[1] + transXY[1]
         return Xrot
+

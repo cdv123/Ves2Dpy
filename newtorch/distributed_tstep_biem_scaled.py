@@ -7,7 +7,7 @@ from curve_batch_compile import Curve
 from capsules import capsules
 from poten import Poten
 from tools.filter import interpft_vec
-from biem_support import dist_wrapper_allExactStokesSLTarget_compare2, naiveNearZoneInfo
+from biem_support_scaled import dist_wrapper_allExactStokesSLTarget_compare2, scalableNearZoneInfo
 import cupy as cp
 
 if torch.cuda.is_available():
@@ -113,7 +113,6 @@ class TStepBiem:
         self.wallN0 = None
         self.wallDLPandRSmat = None
         self.haveWallMats = False
-        self.Galpert = None
         self.Galpert_local = None
         self.D = None
         self.lapDLP = None
@@ -138,7 +137,6 @@ class TStepBiem:
         self._gather_rhs_buf = None
         self._gather_f_buf = None
         self._gather_val_buf = None
-        self._gather_galpert_buf = None
         self._local_val_shape = None
         self._local_rhs_shape = None
         self._local_force_shape = None
@@ -189,9 +187,9 @@ class TStepBiem:
 
         N = Xstore.shape[0] // 2
         self._N = N
-        self._alpha = ((1.0 + self.viscCont) / 2).to(self.device, dtype=torch.float32)
+        self._alpha = ((1.0 + self.viscCont) / 2).to(self.device, dtype=Xstore.dtype)
         self._alpha_local = ((1.0 + self.viscCont_local) / 2).to(
-            self.device, dtype=torch.float32
+            self.device, dtype=Xstore.dtype
         )
         self._global_vec_len = self.nv * 3 * N
 
@@ -200,16 +198,16 @@ class TStepBiem:
         self._local_force_shape = (2 * N, self.chunk)
         self._local_rhs_shape = (3 * N * self.chunk,)
         self._local_val_shape = (3 * N * self.chunk,)
-        self._gather_galpert_buf = [
-            torch.empty_like(self.Galpert_local) for _ in range(self.size)
-        ]
-        dist.all_gather(self._gather_galpert_buf, self.Galpert_local)
-        self.Galpert = torch.cat(self._gather_galpert_buf, dim=2).contiguous()
 
-        self.NearV2V = naiveNearZoneInfo(Xstore, interpft_vec(Xstore, self.op.Nup))
+        self.NearV2V = scalableNearZoneInfo(
+            Xstore,
+            self.op.Nup,
+            local_start=self.start,
+            local_end=self.end,
+        )
 
         self._gather_rhs_buf = [
-            torch.empty(self._local_rhs_shape, dtype=Xstore.dtype, device=self.device)
+            torch.empty(self._local_rhs_shape, device=self.device)
             for _ in range(self.size)
         ]
         self._gather_f_buf = [
@@ -232,11 +230,11 @@ class TStepBiem:
 
         Ben_local, Ten_local, Div_local = vesicle_local.computeDerivs()
         I = (
-            torch.eye(2 * N, device=self.device)
+            torch.eye(2 * N, device=self.device, dtype=self.dtype)
             .unsqueeze(-1)
             .repeat(1, 1, self.chunk)
         )
-        Z = torch.zeros((N, N, self.chunk), device=self.device)
+        Z = torch.zeros((N, N, self.chunk), device=self.device, dtype=self.dtype)
 
         G_Ben_local = torch.matmul(
             self.Galpert_local.permute(2, 0, 1),
@@ -256,6 +254,20 @@ class TStepBiem:
 
         LU, pivots = torch.linalg.lu_factor(mat_all.permute(2, 0, 1).contiguous())
         self.bdiagVes = {"LU": LU, "pivots": pivots}
+
+
+    def _make_global_diag_slp(self):
+        def _slp(f_global):
+            N = self._N
+            f_local = f_global[:, self.start : self.end].contiguous()
+            vself_local = self.op.exactStokesSLdiag(
+                self._vesicle_local, self.Galpert_local, f_local
+            ).contiguous()
+            gathered = [torch.empty_like(vself_local) for _ in range(self.size)]
+            dist.all_gather(gathered, vself_local)
+            return torch.cat(gathered, dim=1).contiguous()
+
+        return _slp
 
     def _assemble_rhs(self, Xstore):
         N = self._N
@@ -289,7 +301,7 @@ class TStepBiem:
             Frepulsion_local = self.op.exactStokesSLdiag(
                 vesicle_local, self.Galpert_local, repulsion_local
             )
-            SLP = lambda X: self.op.exactStokesSLdiag(vesicle, self.Galpert, X)
+            SLP = self._make_global_diag_slp()
             Frepulsion_local += self.op.dist_nearSingInt_rbf(
                 vesicle,
                 repulsion_global,
@@ -313,7 +325,6 @@ class TStepBiem:
         rhs_local = (
             torch.cat([rhs1_local, rhs2_local], dim=0).T.reshape(-1).contiguous()
         )
-        rhs_local = rhs_local.float()
         dist.all_gather(self._gather_rhs_buf, rhs_local)
         self._rhs_local = rhs_local
         self._rhs = torch.cat(self._gather_rhs_buf, dim=0).contiguous()
@@ -326,8 +337,8 @@ class TStepBiem:
         initGMRES = (
             torch.cat((Xstore, sigStore), dim=0)
             .T.reshape(-1)
-            .to(self.device)
-        ).double()
+            .to(self.device, dtype=torch.float64)
+        )
         counter = gmres_counter(disp=True)
 
         gmres_func = lambda X: self.time_matvec(X)
@@ -377,6 +388,7 @@ class TStepBiem:
         return X_, sigma_, eta, RS, counter.niter, iflag
 
     def time_matvec(self, Xn):
+        print("Start")
         Xn = self._cupy_to_torch(Xn, dtype=torch.float64)
 
         op = self.op
@@ -404,7 +416,7 @@ class TStepBiem:
         f = torch.cat(self._gather_f_buf, dim=1).contiguous()
         check_finite("f", f, self.rank)
 
-        SLP = lambda X: op.exactStokesSLdiag(vesicle, self.Galpert, X)
+        SLP = self._make_global_diag_slp()
         Fslp_local = op.dist_nearSingInt_rbf(
             vesicle,
             f,
@@ -446,6 +458,7 @@ class TStepBiem:
         dist.all_gather(self._gather_val_buf, val_local)
         val_global = torch.cat(self._gather_val_buf, dim=0).contiguous()
 
+        print("End")
         if torch.cuda.is_available():
             return self._torch_to_cupy(val_global)
         return val_global.cpu().numpy()
@@ -666,3 +679,4 @@ class TStepBiem:
         else:
             raise ValueError("Unknown or missing flow type in bg_flow.")
         return vInf * speed
+
