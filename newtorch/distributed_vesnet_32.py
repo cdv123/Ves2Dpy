@@ -24,6 +24,10 @@ from tools.filter import interpft_vec
 import logging
 from poten import Poten
 from parse_args import parse_cli, modify_options_params
+import torch.distributed as dist
+
+sub_ranks = list(range(comm_info.numProcs))
+group = dist.new_group(ranks=sub_ranks)
 
 torch.cuda.set_device(comm_info.device)
 torch.set_default_device(comm_info.device)
@@ -226,6 +230,7 @@ mlarm = MLARM_manyfree_py(
     rank=comm_info.rank,
     size=comm_info.numProcs,
     nv=nv,
+    group=group
 )
 
 mlarm.nearNetwork.model.eval()

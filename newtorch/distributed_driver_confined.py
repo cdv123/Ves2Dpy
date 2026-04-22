@@ -10,7 +10,7 @@ import numpy as np
 from curve_batch_compile import Curve
 from capsules import capsules
 import time
-from distributed_tstep_biem_scaled import TStepBiem
+from distributed_tstep_biem import TStepBiem
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from tqdm import tqdm
@@ -210,6 +210,7 @@ if prams["nv"] % size != 0:
         f"nv={prams['nv']} must be divisible by world_size={size} for distributed_tstep_biem_rewritten"
     )
 
+print(options, params)
 print("GMRES max iter:", prams["gmresMaxIter"])
 print("is cuda available:", torch.cuda.is_available())
 

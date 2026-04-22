@@ -1,16 +1,15 @@
 # %%
 import torch
 from helper_functions import init_distributed
-
 comm_info = init_distributed()
 torch.cuda.set_device(comm_info.device)
+
 import numpy as np
 
 torch.set_default_dtype(torch.float32)
 import torch.backends.cudnn as cudnn
 
-cudnn.benchmark = False
-cudnn.deterministic = True
+cudnn.benchmark = True
 import torch._dynamo
 from torch.profiler import profile, ProfilerActivity
 
@@ -29,6 +28,11 @@ import logging
 from torch import distributed as dist
 from poten import Poten
 from parse_args import parse_cli, modify_options_params
+
+sub_ranks = list(range(comm_info.numProcs))
+print(sub_ranks)
+group = dist.new_group(ranks=sub_ranks)
+
 
 torch.cuda.set_device(comm_info.device)
 torch.set_default_device(comm_info.device)
@@ -217,6 +221,7 @@ mlarm = MLARM_manyfree_py(
     rank=comm_info.rank,
     size=comm_info.numProcs,
     nv=nv,
+    group=None
 )
 
 mlarm.nearNetwork.model.eval()
@@ -224,24 +229,18 @@ mlarm.relaxNetwork.model.eval()
 mlarm.tenSelfNetwork.model.eval()
 mlarm.tenAdvNetwork.model.eval()
 mlarm.mergedAdvNetwork.model.eval()
-# mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="reduce-overhead")
-# mlarm.advNetwork.model  = torch.compile(mlarm.advNetwork.model,  mode="max-autotune")
+#mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="default")
 
-print("default dtype:", torch.get_default_dtype())
-print("near param dtype:", next(mlarm.nearNetwork.model.parameters()).dtype)
-print("relax param dtype:", next(mlarm.relaxNetwork.model.parameters()).dtype)
-print("tenSelf param dtype:", next(mlarm.tenSelfNetwork.model.parameters()).dtype)
-print("tenAdv param dtype:", next(mlarm.tenAdvNetwork.model.parameters()).dtype)
 
-# mlarm.relaxNetwork.model = torch.compile(
-#    mlarm.relaxNetwork.model, mode="reduce-overhead"
-# )
-# mlarm.tenSelfNetwork.model = torch.compile(
-#    mlarm.tenSelfNetwork.model, mode="reduce-overhead"
-# )
-# mlarm.tenAdvNetwork.model = torch.compile(
-#    mlarm.tenAdvNetwork.model, mode="reduce-overhead"
-# )
+#mlarm.relaxNetwork.model = torch.compile(
+#   mlarm.relaxNetwork.model, mode="default"
+#)
+#mlarm.tenSelfNetwork.model = torch.compile(
+#   mlarm.tenSelfNetwork.model, mode="default"
+#)
+#mlarm.tenAdvNetwork.model = torch.compile(
+#   mlarm.tenAdvNetwork.model, mode="default"
+#)
 # print(type(mlarm.nearNetwork))
 
 area0, len0 = oc.geomProp(X)[1:]
@@ -300,7 +299,7 @@ for it in tqdm(range(int(Th // dt))):
 
     # X, Ten = mlarm.time_step_many(X, Ten)
     with torch.no_grad():
-        X, Ten = mlarm.time_step_many_noinfo(X, Ten, nlayers)
+        Xnew, Ten = mlarm.time_step_many_noinfo(X, Ten, nlayers)
         # X, Ten = mlarm.time_step_many_noinfo_exactVelLayer(X, Ten, nlayers)
     ## np.save(f"shape_t{currtime}.npy", X)
     # tEnd = time.time()
@@ -310,6 +309,17 @@ for it in tqdm(range(int(Th // dt))):
     # errArea = torch.max(torch.abs(area - mlarm.area0) / mlarm.area0)
     # errLen = torch.max(torch.abs(length - mlarm.len0) / mlarm.len0)
     # if options["reparameterization"]:
+        #if False: 
+        #    # Redistribute arc-length
+        #    Xnew0 = Xnew.clone()
+        #    for _ in range(5):
+        #        Xnew, allGood = oc.redistributeArcLength(Xnew, modes)
+        #    X = oc.alignCenterAngle(Xnew0, Xnew)
+        #else:
+        #    X = Xnew
+
+        #if True:
+        #    X = oc.correctAreaAndLengthAugLag(X.float(), area0, len0)
     # Redistribute arc-length
     ## Update counter and time
     ## it += 1

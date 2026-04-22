@@ -1,4 +1,5 @@
 import torch
+import os
 import sys
 
 torch.set_default_dtype(torch.float32)
@@ -158,6 +159,7 @@ if __name__ == "__main__":
     _, area0, len0 = oc.geomProp(X)
     print("area0: ", area0)
     print("len0: ", len0)
+    os.makedirs(os.path.dirname(fileName), exist_ok=True)
 
     with open(fileName, "wb") as fid:
         np.array([prams["N"], prams["nv"]]).flatten().astype("float64").tofile(fid)
@@ -188,7 +190,7 @@ if __name__ == "__main__":
     ).to(X.device)  # .double()
 
     numCores = prams["nProcs"]
-    numCoresVesnet = numCores
+    numCoresVesnet = prams["nProcsVesNet"]
 
     # Window size should be divisible by number of cores
     prams["T"] /= numCores
@@ -228,7 +230,7 @@ if __name__ == "__main__":
             sigma=sigma,
             numCores=numCores,
             endTime=prams["T"],
-            pararealIter=1,
+            pararealIter=prams["pr"],
             file_name=fileName,
             comm_info=comm_info,
         )

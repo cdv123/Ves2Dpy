@@ -43,6 +43,7 @@ class BIEMSolver:
     ):
         torch.set_default_dtype(torch.float64)
         positions = initPositions.clone()
+        #newSigma = torch.zeros_like(sigmaStore, dtype=torch.float64) 
         newSigma = sigmaStore.clone()
 
         if self.options["confined"]:
@@ -56,6 +57,8 @@ class BIEMSolver:
             positionsNew, newSigma, self.eta, self.RS, _, _ = self.tt.time_step(
                 positions, newSigma, self.eta, self.RS
             )
+            self.eta = torch.zeros(2 * self.params["Nbd"], self.params["nvbd"])
+            self.RS = torch.zeros(3, self.params["nvbd"])
             if self.options["reparameterization"]:
                 # Redistribute arc-length
                 positions0 = positionsNew.clone()

@@ -1,6 +1,7 @@
 import torch
 
 torch.set_default_dtype(torch.float32)
+#torch.cuda.set_device(comm_info.device)
 import sys
 
 sys.path.append("..")
@@ -236,7 +237,13 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         rank,
         size,
         nv,
+        group,
     ):
+        self.group = group
+        self.device = device
+        torch.cuda.set_device(self.device)
+        torch.set_default_device(self.device)
+        print("DEVICE", self.device)
         super().__init__()
         self.rank = rank
         self.num_ranks = size
@@ -322,6 +329,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         self, Xold, tenOld, nlayers=3, local_indicies=None, targets=None
     ):
         torch.cuda.set_device(self.device)
+        torch.set_default_device(self.device)
         # background velocity on vesicles
         vback = self.vinf(Xold)
 
@@ -401,7 +409,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         tenNew_local = -(vBack_local + selfBendSolve_local)
         gather_list = [torch.zeros_like(tenNew_local) for _ in range(self.size)]
 
-        dist.all_gather(gather_list, tenNew_local)
+        dist.all_gather(gather_list, tenNew_local, group=self.group)
         tenNew = torch.cat(gather_list, dim=1)
 
         fTen_new = vesicle.tensionTerm(tenNew)
@@ -473,7 +481,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
 
         Xnew_local = filterShape(Xnew_local.to(Xold.device), 16)
 
-        dist.all_gather(gather_list, Xnew_local)
+        dist.all_gather(gather_list, Xnew_local, group=self.group)
         Xnew = torch.cat(gather_list, dim=1)
 
         # print(f"monitoring tenNew magnitude: {torch.max(torch.abs(tenNew))}")
@@ -654,8 +662,10 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             VelRot_ = self.rotationOperator(
                 VelBefRot_.reshape(-1, 2 * N).T,
                 torch.repeat_interleave(-rotate, nlayers, dim=0),
-                torch.zeros(2, nv, device=self.device),
+                torch.zeros((2, nlayers), device=self.device, dtype=tracJump.dtype),
             )
+            # VelRot_ is (2N, nlayers) here, so make it (2N, nlayers, 1)
+            VelRot_ = VelRot_.unsqueeze(-1)
         else:
             VelRot_ = self.rotationOperator(
                 VelBefRot_.reshape(-1, 2 * N).T,
@@ -815,16 +825,16 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         L_gather = [torch.zeros_like(L_local, device=self.device) for _ in range(self.size)]
 
         velx_local = velx_local.contiguous()
-        vely_local = velx_local.contiguous()
+        vely_local = vely_local.contiguous()
         xlayers_local = xlayers_local.contiguous()
         ylayers_local = ylayers_local.contiguous()
         L_local = L_local.contiguous()
 
-        dist.all_gather(velx_gather, velx_local)
-        dist.all_gather(vely_gather, vely_local)
-        dist.all_gather(xlayers_gather, xlayers_local)
-        dist.all_gather(ylayers_gather, ylayers_local)
-        dist.all_gather(L_gather, L_local)
+        dist.all_gather(velx_gather, velx_local, group=self.group)
+        dist.all_gather(vely_gather, vely_local, group=self.group)
+        dist.all_gather(xlayers_gather, xlayers_local, group=self.group)
+        dist.all_gather(ylayers_gather, ylayers_local, group=self.group)
+        dist.all_gather(L_gather, L_local, group=self.group)
         velx = torch.cat(velx_gather, dim=2)
         vely = torch.cat(vely_gather, dim=2)
         xlayers = torch.cat(xlayers_gather, dim=2)
@@ -842,7 +852,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             torch.zeros_like(totalForceUp_local, device=self.device)
             for _ in range(self.size)
         ]
-        dist.all_gather(totalForceUp_gather, totalForceUp_local)
+        dist.all_gather(totalForceUp_gather, totalForceUp_local, group=self.group)
         totalForceUp = torch.cat(totalForceUp_gather, dim=1)
 
         def iter_blocks(start_global: int, end_global: int, num_parts: int):

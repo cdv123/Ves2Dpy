@@ -2,17 +2,97 @@ import torch
 import logging
 from curve_batch_compile import Curve
 from poten import Poten
-from distributed_wrapper_MLARM_batch_compile_N128 import MLARM_manyfree_py
+from distributed_wrapper_MLARM_batch_compile_N128 import MLARM_manyfree_py as VesNet128
+from distributed_wrapper_MLARM_batch_compile_N32 import MLARM_manyfree_py as VesNet32
 from helper_functions import set_bg_flow
 from torch import distributed as dist
 import numpy as np
 from tqdm import tqdm
 
+params_N128 = {
+    "adv_net_input_norm": np.load("../../files2runVes2Dpy/2024Oct_adv_fft_tot_in_para.npy"),
+    "adv_net_output_norm": np.load("../../files2runVes2Dpy/2024Oct_adv_fft_tot_out_para.npy"),
+
+    "relax_net_input_norm": np.array([
+        -8.430413700466488e-09,
+        0.06278684735298157,
+        6.290720477863943e-08,
+        0.13339413702487946,
+    ]),
+    "relax_net_output_norm": np.array([
+        -2.884585348361668e-10,
+        0.00020574081281665713,
+        -5.137390512999218e-10,
+        0.0001763451291481033,
+    ]),
+
+    "nearNetInputNorm": np.load("../../files2runVes2Dpy/in_param_disth_allmode.npy"),
+    "nearNetOutputNorm": np.load("../../files2runVes2Dpy/out_param_disth_allmode.npy"),
+
+    "tenSelfNetInputNorm": np.array([
+        0.00017108717293012887,
+        0.06278623640537262,
+        0.002038202714174986,
+        0.13337858021259308,
+    ]),
+    "tenSelfNetOutputNorm": np.array([
+        337.7627868652344,
+        466.6429138183594,
+    ]),
+
+    "tenAdvNetInputNorm": np.load("../../files2runVes2Dpy/2024Oct_advten_in_para_allmodes.npy"),
+    "tenAdvNetOutputNorm": np.load("../../files2runVes2Dpy/2024Oct_advten_out_para_allmodes.npy"),
+}
+
+
+params_N32 = {
+    "adv_net_input_norm": np.load("/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/adv_trained/2024Oct_advfft_in_para_downsample_all_mode.npy"),
+    "adv_net_output_norm": np.load("/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/adv_trained/2024Oct_advfft_out_para_downsample_all_mode.npy"),
+
+    "relax_net_input_norm": np.array([
+        -1.5200416214611323e-07,
+        0.06278670579195023,
+        -2.5547041104800883e-07,
+        0.13339416682720184,
+    ]),
+    "relax_net_output_norm": np.array([
+        -2.329148207635967e-09,
+        0.00020403489179443568,
+        -1.5361016902915026e-09,
+        0.00017457373905926943,
+    ]),
+
+    "nearNetInputNorm": np.load("/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/near_trained/in_param_downsample32_allmode.npy"),
+    "nearNetOutputNorm": np.load("/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/near_trained/out_param_downsample32_allmode.npy"),
+
+    "tenSelfNetInputNorm": np.array([
+        0.00016983709065243602,
+        0.06278808414936066,
+        0.0020364541560411453,
+        0.13337676227092743,
+        6.277393817901611,
+        9.243043899536133,
+    ]),
+    "tenSelfNetOutputNorm": np.array([
+        337.7682800292969,
+        458.4842834472656,
+    ]),
+
+    "tenAdvNetInputNorm": np.load("/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/advten_trained_downsample32/2024Nov_advten_ds32_in_para_allmodes.npy"),
+    "tenAdvNetOutputNorm": np.load("/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/advten_trained_downsample32/2024Nov_advten_ds32_out_para_allmodes.npy"),
+}
 
 class VesNetSolver:
     def __init__(
         self, options, params, Xwalls, initPositions, comm_info, nv, new_num_ranks
     ):
+        if params["N"] == 32:
+            vesnet_params = params_N32
+            MLARM_manyfree_py = VesNet32
+        else:
+            vesnet_params = params_N128
+            MLARM_manyfree_py = VesNet128
+
         self.rank = comm_info.rank
         torch.set_default_dtype(torch.float32)
         torch.set_default_device(comm_info.device)
@@ -23,53 +103,20 @@ class VesNetSolver:
         # Build MLARM class to take time steps using networks
         # Load the normalization (mean, std) values for the networks
         # ADV Net retrained in Oct 2024
-        adv_net_input_norm = np.load(
-            "../../files2runVes2Dpy/2024Oct_adv_fft_tot_in_para.npy"
-        )
-        adv_net_output_norm = np.load(
-            "../../files2runVes2Dpy/2024Oct_adv_fft_tot_out_para.npy"
-        )
+        adv_net_input_norm = vesnet_params["adv_net_input_norm"] 
+        adv_net_output_norm = vesnet_params["adv_net_output_norm"]
         # Relax Net for dt = 1E-5 (DIFF_June8)
-        relax_net_input_norm = np.array(
-            [
-                -8.430413700466488e-09,
-                0.06278684735298157,
-                6.290720477863943e-08,
-                0.13339413702487946,
-            ]
-        )
-        relax_net_output_norm = np.array(
-            [
-                -2.884585348361668e-10,
-                0.00020574081281665713,
-                -5.137390512999218e-10,
-                0.0001763451291481033,
-            ]
-        )
-
-        nearNetInputNorm = np.load("../../files2runVes2Dpy/in_param_disth_allmode.npy")
-        nearNetOutputNorm = np.load(
-            "../../files2runVes2Dpy/out_param_disth_allmode.npy"
-        )
+        relax_net_input_norm = vesnet_params["relax_net_input_norm"]
+        relax_net_output_norm = vesnet_params["relax_net_output_norm"]
+        nearNetInputNorm = vesnet_params["nearNetInputNorm"] 
+        nearNetOutputNorm = vesnet_params["nearNetOutputNorm"]
 
         # self ten network updated by using a 156k dataset
-        tenSelfNetInputNorm = np.array(
-            [
-                0.00017108717293012887,
-                0.06278623640537262,
-                0.002038202714174986,
-                0.13337858021259308,
-            ]
-        )
-        tenSelfNetOutputNorm = np.array([337.7627868652344, 466.6429138183594])
+        tenSelfNetInputNorm = vesnet_params["tenSelfNetInputNorm"]
+        tenSelfNetOutputNorm = vesnet_params["tenSelfNetOutputNorm"] 
 
-        tenAdvNetInputNorm = np.load(
-            "../../files2runVes2Dpy/2024Oct_advten_in_para_allmodes.npy"
-        )
-        tenAdvNetOutputNorm = np.load(
-            "../../files2runVes2Dpy/2024Oct_advten_out_para_allmodes.npy"
-        )
-
+        tenAdvNetInputNorm = vesnet_params["tenAdvNetInputNorm"]
+        tenAdvNetOutputNorm = vesnet_params["tenAdvNetOutputNorm"]
         vinf = set_bg_flow(options["farField"], params["farFieldSpeed"])
         self.oc = Curve()
         logger = logging.getLogger(__name__)
@@ -106,6 +153,7 @@ class VesNetSolver:
             rank=comm_info.rank,
             size=new_num_ranks,
             nv=nv,
+            group=self.sub_group
         )
 
         self.mlarm.nearNetwork.model.eval()
@@ -162,10 +210,12 @@ class VesNetSolver:
         torch.set_default_device(self.device)
         torch.set_default_dtype(torch.float32)
         positions = initPositions.clone()
-        dist.broadcast(positions, src=0)
-        dist.broadcast(sigmaStore, src=0)
-        if self.rank > self.new_num_ranks:
-            return positions, sigmaStore
+        print(self.rank, self.new_num_ranks)
+        if self.rank >= self.new_num_ranks:
+            return initPositions.clone(), sigmaStore
+        print("Starting vesnet")
+        dist.broadcast(positions, src=0, group=self.sub_group)
+        dist.broadcast(sigmaStore, src=0, group=self.sub_group)
 
         sigmaStore = sigmaStore.to(dtype=torch.float32)
 
@@ -182,9 +232,16 @@ class VesNetSolver:
             start_time += self.params["dt"]
 
             with torch.no_grad():
-                positions, sigmaStore = self.mlarm.time_step_many_noinfo(
+                positionsNew, sigmaStore = self.mlarm.time_step_many_noinfo(
                     positions, sigmaStore, self.nlayers
                 )
+
+            positionsNew0 = positionsNew.clone()
+            for _ in range(5):
+                positionsNew, allGood = self.oc.redistributeArcLength(positionsNew, self.modes)
+            positions = self.oc.alignCenterAngle(positionsNew0, positionsNew)
+
+            positions = self.oc.correctAreaAndLengthAugLag(positions.float(), self.area0, self.len0)
 
             if out_file_name is not None:
                 output = np.concatenate(
