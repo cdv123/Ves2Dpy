@@ -713,7 +713,6 @@ class Poten:
 
         # print(nearField)
         return farField + nearField, nearField
-
     def dist_nearSingInt_rbf(
         self,
         vesicleSou,
@@ -725,54 +724,47 @@ class Poten:
         tEqualS,
         start,
         end,
-        rank
+        rank,
     ):
         """
-        Computes a layer potential due to `f` at all points in `vesicleTar.X`.
+        Distributed near-singular correction.
 
-        Parameters:
-        vesicleSou - Source vesicles object
-        f - Density function
-        selfMat - Function computing self-interactions
-        NearStruct - Structure with near-zone data
-        kernelDirect - Function for direct kernel evaluations
-        vesicleTar - Target vesicles object
-        tEqualS - Boolean, true if sources == targets
-        o - Object containing interpolation and upsampling parameters
-
-        Returns:
-        LP - Computed layer potential
+        Far-field/direct evaluation still uses all source vesicles.
+        Expensive RBF correction is built only for source vesicles that are near
+        this rank's local target vesicles.
         """
-        # If only a single vesicle exists, return zeros
+
         if tEqualS and vesicleSou.X.shape[1] == 1:
             return torch.zeros_like(vesicleTar.X)
 
         device = f.device
 
-        Xsou, Nsou, nvSou = (
-            vesicleSou.X,
-            vesicleSou.X.shape[0] // 2,
-            vesicleSou.X.shape[1],
-        )
+        Xsou_full = vesicleSou.X
+        Nsou = Xsou_full.shape[0] // 2
+        nvSou_full = Xsou_full.shape[1]
 
         Xtar = vesicleTar.X
         Ntar = Xtar.shape[0] // 2
         nvTar = Xtar.shape[1]
 
-        # Upsample sources
+        # ------------------------------------------------------------
+        # 1. Global far-field/direct evaluation: still uses ALL sources
+        # ------------------------------------------------------------
         Nup = self.Nup
-        Xup = interpft_vec(Xsou, Nup)  # Upsample source points
-        fup = interpft_vec(f, Nup)  # Upsample density function
+        Xup_full = interpft_vec(Xsou_full, Nup)
+        fup_full = interpft_vec(f, Nup)
 
-        # Compute self-interaction
-        vself = selfMat(f)
+        vesicleUp_full = capsules(
+            Xup_full,
+            None,
+            None,
+            vesicleSou.kappa,
+            vesicleSou.viscCont,
+        )
 
-        # Upsampled vesicle object
-        vesicleUp = capsules(Xup, None, None, vesicleSou.kappa, vesicleSou.viscCont)
+        vself_full = selfMat(f)
 
-        # interpOrder = self.interpMat.shape[0]
-        # p = (interpOrder + 1) // 2
-        if tEqualS and nvSou > 1:
+        if tEqualS and nvSou_full > 1:
             info_stokes = NearV2V[-1]
 
             ids0 = info_stokes[0]
@@ -784,85 +776,188 @@ class Poten:
             info_stokes_local_targets = (
                 ids0[mask],
                 ids1[mask],
-                ids2_global[mask],   # keep GLOBAL target ids
+                ids2_global[mask],
             )
 
             farField = kernelDirect(
-                vesicleUp.X,
-                vesicleUp.sa,
-                fup,
+                vesicleUp_full.X,
+                vesicleUp_full.sa,
+                fup_full,
                 Xtar,
                 info_stokes_local_targets,
                 base_offset=start,
             )
+
         elif not tEqualS:
-            farField = kernelDirect(vesicleUp, fup, Xtar, torch.arange(nvSou))
+            farField = kernelDirect(
+                vesicleUp_full,
+                fup_full,
+                Xtar,
+                torch.arange(nvSou_full, device=device),
+            )
+
         else:
             farField = torch.zeros(
-                (2 * Ntar, nvTar), dtype=torch.float32, device=device
+                (2 * Ntar, nvTar),
+                dtype=Xtar.dtype,
+                device=device,
             )
+
         check_finite("farField_before_correction", farField, rank)
 
+        # ------------------------------------------------------------
+        # 2. Work out which source vesicles are near this rank's targets
+        # ------------------------------------------------------------
+        if not (tEqualS and nvSou_full > 1):
+            return farField
+
+        id1_global_all, id2_global_all = NearV2V[2]
+
+        if id1_global_all.numel() == 0:
+            return farField
+
+        # id1_global is a global target point index in [0, N * nv)
+        local_target_mask = (
+            (start * Nsou <= id1_global_all)
+            & (id1_global_all < end * Nsou)
+        )
+
+        if not torch.any(local_target_mask):
+            return farField
+
+        id1_global = id1_global_all[local_target_mask]
+        id2_global = id2_global_all[local_target_mask]
+
+        local_near_sources = torch.unique(id2_global)
+
+        if local_near_sources.numel() == 0:
+            return farField
+
+        # ------------------------------------------------------------
+        # 3. Restrict expensive RBF setup to only those near sources
+        # ------------------------------------------------------------
+        Xsou = Xsou_full[:, local_near_sources]
+        f_near = f[:, local_near_sources]
+
+        if torch.is_tensor(vesicleSou.viscCont):
+            viscCont_near = vesicleSou.viscCont[local_near_sources]
+        else:
+            viscCont_near = vesicleSou.viscCont
+
+        vesicleSou_near = capsules(
+            Xsou,
+            None,
+            None,
+            vesicleSou.kappa,
+            viscCont_near,
+        )
+
+        nvSou = Xsou.shape[1]
+
+        # Map global source ids -> local source ids in the restricted source list
+        # local_near_sources[j] is global source id for restricted local source j.
+        source_map = torch.empty(
+            nvSou_full,
+            dtype=torch.long,
+            device=device,
+        )
+        source_map[local_near_sources] = torch.arange(
+            local_near_sources.numel(),
+            device=device,
+            dtype=torch.long,
+        )
+
+        id2_local = source_map[id2_global]
+
+        # Near info now uses:
+        # id1_global: still global target point id
+        # id2_local: local source id inside restricted source list
+        info_local = (id1_global, id2_local)
+
+        # ------------------------------------------------------------
+        # 4. Build source-side RBF data only for near sources
+        # ------------------------------------------------------------
         upsample = -1
+
         if Nsou == 32:
             if upsample <= 1:
-                const = 0.672  # * self.len[0].item()
+                const = 0.672
             elif upsample == 2:
                 const = 0.566
-                vself = interpft_vec(vself, upsample * Nsou)
             elif upsample == 4:
-                # const = 0.495
                 const = 0.305
-                vself = interpft_vec(vself, upsample * Nsou)
         else:
-            upsample = -1
             const = 0.0132
 
         nlayers = 3
+
         Nup_for_layers = (
             Nsou * (nlayers - 1) * math.ceil(math.sqrt((nlayers - 1) * Nsou))
         )
-        # Nup_for_layers = Nsou * 2 * math.ceil(math.sqrt(2*Nsou))
-        Xup_layers = interpft_vec(Xsou, Nup_for_layers)  # Upsample source points
-        fup_layers = interpft_vec(f, Nup_for_layers)  # Upsample density function
+
+        Xup_layers = interpft_vec(Xsou, Nup_for_layers)
+        fup_layers = interpft_vec(f_near, Nup_for_layers)
+
         vesicleUp_layers = capsules(
-            Xup_layers, None, None, vesicleSou.kappa, vesicleSou.viscCont
+            Xup_layers,
+            None,
+            None,
+            vesicleSou.kappa,
+            viscCont_near,
         )
 
-        # print(f"using nlayers {nlayers} and upsample {upsample}")
         N = Xsou.shape[0] // 2
+
         if upsample > 0:
-            Nup_self = N * upsample  # is different from vesicleUp.N !!
-            Xup_self = interpft_vec(Xsou, Nup_self)  # Upsample source points
+            Nup_self = N * upsample
+            Xup_self = interpft_vec(Xsou, Nup_self)
+            vself_near = interpft_vec(vself_full[:, local_near_sources], Nup_self)
         else:
             Nup_self = N
             Xup_self = Xsou
+            vself_near = vself_full[:, local_near_sources]
 
-        # vesicleUp = capsules(Xup, None, None, vesicle.kappa, vesicle.viscCont)
         oc = Curve()
+
         dlayer = torch.linspace(
-            0, 1 / N, nlayers, dtype=torch.float32, device=Xsou.device
+            0,
+            1 / N,
+            nlayers,
+            dtype=Xsou.dtype,
+            device=Xsou.device,
         )
+
         _, tang = oc.diffProp_jac_tan(Xup_self)
+
         rep_nx = tang[Nup_self:, :, None].expand(-1, -1, nlayers - 1)
         rep_ny = -tang[:Nup_self, :, None].expand(-1, -1, nlayers - 1)
-        dx = (
-            rep_nx * dlayer[[1, 2, 3]] if nlayers == 4 else rep_nx * dlayer[[1, 2]]
-        )  # (N, nv, nlayers-1)
-        dy = rep_ny * dlayer[[1, 2, 3]] if nlayers == 4 else rep_ny * dlayer[[1, 2]]
+
+        if nlayers == 4:
+            dx = rep_nx * dlayer[[1, 2, 3]]
+            dy = rep_ny * dlayer[[1, 2, 3]]
+        else:
+            dx = rep_nx * dlayer[[1, 2]]
+            dy = rep_ny * dlayer[[1, 2]]
+
         tracers = torch.permute(
             torch.vstack(
                 [
                     torch.repeat_interleave(
-                        Xup_self[:Nup_self, :, None], nlayers - 1, dim=-1
-                    ) + dx,
+                        Xup_self[:Nup_self, :, None],
+                        nlayers - 1,
+                        dim=-1,
+                    )
+                    + dx,
                     torch.repeat_interleave(
-                        Xup_self[Nup_self:, :, None], nlayers - 1, dim=-1
-                    ) + dy,
+                        Xup_self[Nup_self:, :, None],
+                        nlayers - 1,
+                        dim=-1,
+                    )
+                    + dy,
                 ]
             ),
             (0, 2, 1),
-        )  # (2*N, nlayers-1, nv)
+        )
 
         velx, vely, xlayers, ylayers = exactStokesSL_onlyself(
             vesicleUp_layers.X,
@@ -870,28 +965,46 @@ class Poten:
             fup_layers,
             Nup_self,
             Xup_self,
-            vself,
+            vself_near,
             tracers,
         )
 
         all_X = torch.concat(
-            (xlayers.reshape(-1, 1, nvSou), ylayers.reshape(-1, 1, nvSou)), dim=1
-        )  # (nlayers * N, 2, nv), 2 for x and y
+            (
+                xlayers.reshape(-1, 1, nvSou),
+                ylayers.reshape(-1, 1, nvSou),
+            ),
+            dim=1,
+        )
+
         all_X = all_X / const
+
         matrices = torch.exp(
             -torch.sum((all_X[:, None] - all_X[None, ...]) ** 2, dim=-2)
         )
-        matrices += (torch.eye(all_X.shape[0]).unsqueeze(-1) * 1e-6).expand(
-            -1, -1, nvSou
-        )  # (nlayers*N, nlayers*N, nv)
+
+        matrices += (
+            torch.eye(
+                all_X.shape[0],
+                dtype=matrices.dtype,
+                device=device,
+            )
+            .unsqueeze(-1)
+            .expand(-1, -1, nvSou)
+            * 1e-6
+        )
+
         L = torch.linalg.cholesky(matrices.permute(2, 0, 1))
 
+        # ------------------------------------------------------------
+        # 5. Apply correction to local targets only
+        # ------------------------------------------------------------
         self.dist_nearFieldCorrectionUP_SOLVE(
             vesicleTar,
             start,
             end,
             upsample,
-            NearV2V[2],
+            info_local,
             L,
             farField,
             velx,
@@ -902,6 +1015,7 @@ class Poten:
         )
 
         return farField
+
 
     def nearSingInt_rbf(
         self,
