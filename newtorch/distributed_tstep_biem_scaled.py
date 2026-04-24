@@ -1,4 +1,5 @@
 import math
+import time
 import numpy as np
 import torch
 from torch import distributed as dist
@@ -219,6 +220,8 @@ class TStepBiem:
             for _ in range(self.size)
         ]
 
+        self.SLP = self._make_global_diag_slp()
+
     def _build_block_diagonal_preconditioner(self):
         if not self.usePreco:
             self.bdiagVes = None
@@ -269,6 +272,25 @@ class TStepBiem:
 
         return _slp
 
+    def reset_profile(self):
+        self.prof = {
+            "cache_total": 0.0,
+            "galpert": 0.0,
+            "nearzone": 0.0,
+            "preconditioner_setup": 0.0,
+            "rhs_total": 0.0,
+            "rhs_gather": 0.0,
+            "gmres_total": 0.0,
+            "matvec_total": 0.0,
+            "tracjump": 0.0,
+            "self_slp": 0.0,
+            "gather_f": 0.0,
+            "near_sing": 0.0,
+            "gather_val": 0.0,
+            "preconditioner_apply": 0.0,
+        }
+
+
     def _assemble_rhs(self, Xstore):
         N = self._N
         Xstore_local = Xstore[:, self.start : self.end].to(self.device)
@@ -301,7 +323,7 @@ class TStepBiem:
             Frepulsion_local = self.op.exactStokesSLdiag(
                 vesicle_local, self.Galpert_local, repulsion_local
             )
-            SLP = self._make_global_diag_slp()
+            SLP = self.SLP 
             Frepulsion_local += self.op.dist_nearSingInt_rbf(
                 vesicle,
                 repulsion_global,
@@ -330,8 +352,12 @@ class TStepBiem:
         self._rhs = torch.cat(self._gather_rhs_buf, dim=0).contiguous()
 
     def time_step(self, Xstore, sigStore, etaStore, RSstore):
+        self.start_time = time.perf_counter()
+        self.reset_profile()
         self._build_timestep_cache(Xstore, sigStore)
+        self.prof["cache_total"] = time.perf_counter() - self.start_time
         self._build_block_diagonal_preconditioner()
+        self.prof["preconditioner_setup"] = time.perf_counter() - self.start_time
         self._assemble_rhs(Xstore)
 
         initGMRES = (
@@ -374,6 +400,7 @@ class TStepBiem:
                 x0=initGMRES.cpu().numpy(),
                 callback=counter,
             )
+        self.prof["gmres_total"] = time.perf_counter() - self.start_time
 
         iflag = info != 0
         Xn = self._cupy_to_torch(Xn, dtype=torch.float32)
@@ -384,11 +411,16 @@ class TStepBiem:
         Xn_reshaped = Xn.view(self.nv, 3, N)
         X_ = Xn_reshaped[:, 0:2, :].reshape(self.nv, 2 * N).transpose(0, 1).clone()
         sigma_ = Xn_reshaped[:, 2, :].T.clone().to(dtype=torch.float64)
+        end_time = time.perf_counter()
+
+        if self.rank == 0:
+            print("Total time:", end_time - self.start_time)
+            print(self.prof)
 
         return X_, sigma_, eta, RS, counter.niter, iflag
 
     def time_matvec(self, Xn):
-        print("Start")
+        start_matvec = time.perf_counter()
         Xn = self._cupy_to_torch(Xn, dtype=torch.float64)
 
         op = self.op
@@ -407,16 +439,16 @@ class TStepBiem:
         sigmaM_local = Xn_reshaped_local[:, 2, :].T.contiguous()
 
         f_local = vesicle_local.tracJump(Xm_local, sigmaM_local)
-        check_finite("f_local", f_local, self.rank)
+        f_local_time = time.perf_counter() - start_matvec
 
         Gf_local = op.exactStokesSLdiag(vesicle_local, self.Galpert_local, f_local)
-        check_finite("Gf_local", Gf_local, self.rank)
+        Gf_local_time = time.perf_counter()- start_matvec
 
         dist.all_gather(self._gather_f_buf, f_local)
+        gf_dist_time = time.perf_counter()- start_matvec
         f = torch.cat(self._gather_f_buf, dim=1).contiguous()
-        check_finite("f", f, self.rank)
 
-        SLP = self._make_global_diag_slp()
+        SLP = self.SLP
         Fslp_local = op.dist_nearSingInt_rbf(
             vesicle,
             f,
@@ -429,7 +461,7 @@ class TStepBiem:
             self.end,
             self.rank,
         )
-        check_finite("Fslp_local", Fslp_local, self.rank)
+        fslp_local_time = time.perf_counter()- start_matvec
 
         alpha_local = ((1.0 + vesicle_local.viscCont) / 2).to(
             self.device, dtype=Gf_local.dtype
@@ -439,6 +471,7 @@ class TStepBiem:
             - self.dt * Gf_local / alpha_local
             - self.dt * Fslp_local / alpha_local
         )
+        valPos_local_time = time.perf_counter()- start_matvec
         valTen = vesicle_local.surfaceDiv(Xm_local)
 
         val_local = (
@@ -456,9 +489,20 @@ class TStepBiem:
         )
 
         dist.all_gather(self._gather_val_buf, val_local)
+        gather_val_buf_local_time = time.perf_counter() - start_matvec 
         val_global = torch.cat(self._gather_val_buf, dim=0).contiguous()
+        matvec_time = time.perf_counter() - start_matvec
+        if self.rank == 0:
+            #print("f_local_time", f_local_time)
+            #print("Gf_local_time", Gf_local_time)
+            #print("gf_dist_time", gf_dist_time)
+            #print("fslp_local_time", fslp_local_time)
+            #print("valPos_local_time", valPos_local_time)
+            #print("gather_val_buf_local_time", gather_val_buf_local_time)
+            #print("matvec_time", matvec_time)
+            self.prof["matvec_total"] += matvec_time
 
-        print("End")
+
         if torch.cuda.is_available():
             return self._torch_to_cupy(val_global)
         return val_global.cpu().numpy()
