@@ -72,11 +72,64 @@ def count_vesicles_in_cell_single_file(filename, vsize=5.0, drop_first=False):
     }
 
 
-result = count_vesicles_in_cell_single_file("taylorResults/N128biem32.bin", vsize=5.0)
+fine_result = count_vesicles_in_cell_single_file(
+    "taylorResults/N128biem32.bin", vsize=2.5
+)
+coarse_result = count_vesicles_in_cell_single_file(
+    "taylorResults/N128coarseBiem32.bin", vsize=2.5
+)
+# parareal_result = count_vesicles_in_cell_single_file(
+#    "taylorResults/pararealVesNetSameDt.bin", vsize=2.5
+# )
+# parareal_diff_dt_result = count_vesicles_in_cell_single_file(
+#    "taylorResults/pararealVesNet6e51e5.bin", vsize=2.5
+# )
+fine_parareal = count_vesicles_in_cell_single_file(
+    "taylorResults/pararealSameDtVesnet.bin", vsize=2.5
+)
+coarse_parareal = count_vesicles_in_cell_single_file(
+    "taylorResults/parareal2e51e5Vesnet.bin", vsize=2.5
+)
 
 plt.figure(figsize=(7, 5))
-plt.plot(result["time"], result["percent_in_cell"], linewidth=2)
+plt.plot(
+    fine_result["time"],
+    fine_result["percent_in_cell"],
+    linewidth=2,
+    label="Fine boundary integral method",
+)
+plt.plot(
+    coarse_result["time"],
+    coarse_result["percent_in_cell"],
+    linewidth=2,
+    label="Coarse boundary integral method",
+)
+# plt.plot(
+#    parareal_result["time"],
+#    parareal_result["percent_in_cell"],
+#    linewidth=2,
+#    label="Parareal+VesNet with both coarse and fine dt = 1e-5",
+# )
+# plt.plot(
+#    parareal_diff_dt_result["time"],
+#    parareal_diff_dt_result["percent_in_cell"],
+#    linewidth=2,
+# )
+plt.plot(
+    fine_parareal["time"],
+    fine_parareal["percent_in_cell"],
+    label="Parareal with dt=1e-5",
+    linewidth=2,
+)
+plt.plot(
+    coarse_parareal["time"],
+    coarse_parareal["percent_in_cell"],
+    label="Parareal with fine dt=1e-5, coarse dt=2e-5",
+    linewidth=2,
+)
+
 plt.xlabel("Time")
 plt.ylabel("% of vesicles in the cell")
+plt.legend()
 plt.tight_layout()
 plt.show()
