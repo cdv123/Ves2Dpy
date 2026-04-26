@@ -10,7 +10,7 @@ import numpy as np
 from curve_batch_compile import Curve
 from capsules import capsules
 import time
-from distributed_tstep_biem_scaled import TStepBiem
+from distributed_tstep_biem import TStepBiem
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from tqdm import tqdm
@@ -207,6 +207,7 @@ if prams["nv"] % size != 0:
     raise ValueError(
         f"nv={prams['nv']} must be divisible by world_size={size} for distributed_tstep_biem_rewritten"
     )
+print(prams)
 
 print("GMRES max iter:", prams["gmresMaxIter"])
 print("is cuda available:", torch.cuda.is_available())
@@ -249,7 +250,7 @@ for step in tqdm(range(int(prams["T"] / prams["dt"]))):
     #print(f"GMRES took {iter_} matvecs, successful {not iflag}")
     #print("*****************************************************************")
 
-    output = np.concatenate(([time_], X.cpu().numpy().T.flatten())).astype("float64")
     if rank == 0:
+        output = np.concatenate(([time_], X.cpu().numpy().T.flatten())).astype("float64")
         with open(fileName, "ab") as fid:
             output.tofile(fid)

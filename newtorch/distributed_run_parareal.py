@@ -90,6 +90,7 @@ def initVes2D(options=None, prams=None):
 
 if __name__ == "__main__":
     comm_info = init_distributed()
+    print(comm_info.rank)
     torch.set_default_dtype(torch.float64)
     if torch.cuda.is_available():
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -159,11 +160,11 @@ if __name__ == "__main__":
     _, area0, len0 = oc.geomProp(X)
     print("area0: ", area0)
     print("len0: ", len0)
-    os.makedirs(os.path.dirname(fileName), exist_ok=True)
-
-    with open(fileName, "wb") as fid:
-        np.array([prams["N"], prams["nv"]]).flatten().astype("float64").tofile(fid)
-        X.cpu().numpy().T.flatten().astype("float64").tofile(fid)
+    if fileName is not None:
+        os.makedirs(os.path.dirname(fileName), exist_ok=True)
+        with open(fileName, "wb") as fid:
+            np.array([prams["N"], prams["nv"]]).flatten().astype("float64").tofile(fid)
+            X.cpu().numpy().T.flatten().astype("float64").tofile(fid)
 
     # ------------------------------
     # Time stepping object

@@ -161,19 +161,19 @@ class VesNetSolver:
         self.mlarm.tenSelfNetwork.model.eval()
         self.mlarm.tenAdvNetwork.model.eval()
         self.mlarm.mergedAdvNetwork.model.eval()
-        self.mlarm.nearNetwork.model = torch.compile(
-            self.mlarm.nearNetwork.model, mode="reduce-overhead"
-        )
+        #self.mlarm.nearNetwork.model = torch.compile(
+        #    self.mlarm.nearNetwork.model, mode="reduce-overhead"
+        #)
         # self.mlarm.advNetwork.model  = torch.compile(self.mlarm.advNetwork.model,  mode="max-autotune")
-        self.mlarm.relaxNetwork.model = torch.compile(
-            self.mlarm.relaxNetwork.model, mode="reduce-overhead"
-        )
-        self.mlarm.tenSelfNetwork.model = torch.compile(
-            self.mlarm.tenSelfNetwork.model, mode="reduce-overhead"
-        )
-        self.mlarm.tenAdvNetwork.model = torch.compile(
-            self.mlarm.tenAdvNetwork.model, mode="reduce-overhead"
-        )
+        #self.mlarm.relaxNetwork.model = torch.compile(
+        #    self.mlarm.relaxNetwork.model, mode="reduce-overhead"
+        #)
+        #self.mlarm.tenSelfNetwork.model = torch.compile(
+        #    self.mlarm.tenSelfNetwork.model, mode="reduce-overhead"
+        #)
+        #self.mlarm.tenAdvNetwork.model = torch.compile(
+        #    self.mlarm.tenAdvNetwork.model, mode="reduce-overhead"
+        #)
 
         self.area0, self.len0 = self.oc.geomProp(initPositions)[1:]
 
@@ -231,17 +231,17 @@ class VesNetSolver:
         for i in tqdm(range(num_steps)):
             start_time += self.params["dt"]
 
-            with torch.no_grad():
-                positionsNew, sigmaStore = self.mlarm.time_step_many_noinfo(
+            with torch.inference_mode():
+                positions, sigmaStore = self.mlarm.time_step_many_noinfo(
                     positions, sigmaStore, self.nlayers
                 )
 
-            positionsNew0 = positionsNew.clone()
-            for _ in range(5):
-                positionsNew, allGood = self.oc.redistributeArcLength(positionsNew, self.modes)
-            positions = self.oc.alignCenterAngle(positionsNew0, positionsNew)
+            #positionsNew0 = positionsNew.clone()
+            #for _ in range(5):
+            #    positionsNew, allGood = self.oc.redistributeArcLength(positionsNew, self.modes)
+            #positions = self.oc.alignCenterAngle(positionsNew0, positionsNew)
 
-            positions = self.oc.correctAreaAndLengthAugLag(positions.float(), self.area0, self.len0)
+            #positions = self.oc.correctAreaAndLengthAugLag(positions.float(), self.area0, self.len0)
 
             if out_file_name is not None:
                 output = np.concatenate(

@@ -230,8 +230,8 @@ mlarm.tenSelfNetwork.model.eval()
 mlarm.tenAdvNetwork.model.eval()
 mlarm.mergedAdvNetwork.model.eval()
 #mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="default")
-
-
+#
+#
 #mlarm.relaxNetwork.model = torch.compile(
 #   mlarm.relaxNetwork.model, mode="default"
 #)
@@ -298,7 +298,7 @@ for it in tqdm(range(int(Th // dt))):
     # tStart = time.time()
 
     # X, Ten = mlarm.time_step_many(X, Ten)
-    with torch.no_grad():
+    with torch.inference_mode():
         Xnew, Ten = mlarm.time_step_many_noinfo(X, Ten, nlayers)
         # X, Ten = mlarm.time_step_many_noinfo_exactVelLayer(X, Ten, nlayers)
     ## np.save(f"shape_t{currtime}.npy", X)

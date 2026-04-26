@@ -125,8 +125,8 @@ class PararealSolver:
             latestVesicles[n] = newCoarse[n] + parallelCorrection[n] - previousCoarse[n]
             self.latestSigma[n] = (
                 self.newCoarseSigma[n]
-                + self.parallelCorrectionsSigma[n]
-                - self.coarseSigma[n]
+                +  (self.parallelCorrectionsSigma[n]
+                - self.coarseSigma[n])
             )
 
     def parallelSweep(
