@@ -37,14 +37,18 @@ sys.path.insert(0, parentdir)
 from curve_batch_compile import Curve
 
 # --- Load data ---
-filename = "test3.bin"
+filename = "Verification/OneVesicle/groundTruth.bin"
 parareal_x, parareal_time, N, nv, parareal_xinit = load_ves2d_file_singleX(filename)
 
-filename = "test4.bin"
+filename = "Verification/OneVesicle/groundTruth.bin"
 ground_x, ground_time, N, nv, ground_xinit = load_ves2d_file_singleX(filename)
 
 parareal_ntime = parareal_time.size
 ground_ntime = ground_time.size
+
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0, parentdir)
 
 curve = Curve()
 

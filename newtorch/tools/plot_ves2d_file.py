@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from load_ves2d_file import load_ves2d_file
 
 # --- Load data ---
-filename = "test2.bin"
+filename = "Verification/TwoVesicles/pararealVesNet/oneIter2e5_5e6TwoCore.bin"
 vesx, vesy, time, N, nv, xinit, yinit = load_ves2d_file(filename)
 
 ntime = time.size
