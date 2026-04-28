@@ -58,7 +58,7 @@ class TStepBiem:
     global gathers required by the replicated GMRES are performed.
     """
 
-    def __init__(self, X, Xwalls, options, prams, rank, size, device):
+    def __init__(self, X, Xwalls, options, prams, rank, size, device, group=None):
         oc = Curve()
 
         self.Xwalls = Xwalls
@@ -67,6 +67,7 @@ class TStepBiem:
         self.dt = prams["dt"]
         self.rank = rank
         self.size = size
+        self.group = group
         self.nv = X.shape[1]
         if self.nv % size != 0:
             raise ValueError(
@@ -103,7 +104,7 @@ class TStepBiem:
         self.repStrength = prams["repStrength"]
         self.minDist = prams["minDist"]
 
-        self.op = Poten(prams["N"])
+        self.op = Poten(prams["N"], group=self.group)
         self.usePreco = options["usePreco"]
         self.matFreeWalls = options.get("matFreeWalls", False)
 
@@ -171,7 +172,7 @@ class TStepBiem:
     def initial_confined(self):
         Nbd = self.Xwalls.shape[0] // 2
         nvbd = self.Xwalls.shape[1]
-        self.opWall = Poten(Nbd)
+        self.opWall = Poten(Nbd, group=self.group)
         uwalls = self.farField([])
         self.walls = capsules(
             self.Xwalls, None, uwalls, torch.zeros(nvbd, 1), torch.zeros(nvbd, 1)
@@ -274,7 +275,7 @@ class TStepBiem:
             #    self._vesicle_local, self.Galpert_local, f_local
             #).contiguous()
             gathered = [torch.empty_like(vself_local) for _ in range(self.size)]
-            dist.all_gather(gathered, vself_local)
+            dist.all_gather(gathered, vself_local, group=self.group)
             return torch.cat(gathered, dim=1).contiguous()
 
         return _slp
@@ -324,7 +325,7 @@ class TStepBiem:
             repulsion_gather = [
                 torch.empty_like(repulsion_local) for _ in range(self.size)
             ]
-            dist.all_gather(repulsion_gather, repulsion_local)
+            dist.all_gather(repulsion_gather, repulsion_local, group=self.group)
             repulsion_global = torch.cat(repulsion_gather, dim=1).contiguous()
 
             #Frepulsion_local = self.op.exactStokesSLdiag(
@@ -345,6 +346,7 @@ class TStepBiem:
                 self.start,
                 self.end,
                 self.rank,
+                group=self.group,
             )
             rhs1_local = rhs1_local + self.dt * Frepulsion_local @ torch.diag(
                 1.0 / alpha_local
@@ -357,7 +359,7 @@ class TStepBiem:
         rhs_local = (
             torch.cat([rhs1_local, rhs2_local], dim=0).T.reshape(-1).contiguous()
         )
-        dist.all_gather(self._gather_rhs_buf, rhs_local)
+        dist.all_gather(self._gather_rhs_buf, rhs_local, group=self.group)
         self._rhs_local = rhs_local
         self._rhs = torch.cat(self._gather_rhs_buf, dim=0).contiguous()
 
@@ -454,7 +456,7 @@ class TStepBiem:
         Gf_local = op.exactStokesSLdiag(vesicle_local, self.Galpert_local, f_local)
         # Gf_local_time = time.perf_counter()- start_matvec
 
-        dist.all_gather(self._gather_f_buf, f_local)
+        dist.all_gather(self._gather_f_buf, f_local, group=self.group)
         # gf_dist_time = time.perf_counter()- start_matvec
         f = torch.cat(self._gather_f_buf, dim=1).contiguous()
 
@@ -470,6 +472,7 @@ class TStepBiem:
             self.start,
             self.end,
             self.rank,
+            group=self.group,
         )
         # fslp_local_time = time.perf_counter()- start_matvec
 
@@ -498,7 +501,7 @@ class TStepBiem:
             .contiguous()
         )
 
-        dist.all_gather(self._gather_val_buf, val_local)
+        dist.all_gather(self._gather_val_buf, val_local, group=self.group)
         # gather_val_buf_local_time = time.perf_counter() - start_matvec 
         val_global = torch.cat(self._gather_val_buf, dim=0).contiguous()
         # matvec_time = time.perf_counter() - start_matvec
@@ -533,7 +536,7 @@ class TStepBiem:
         val_local_flat = val_local.reshape(-1).contiguous()
 
         gathered = [torch.empty_like(val_local_flat) for _ in range(self.size)]
-        dist.all_gather(gathered, val_local_flat)
+        dist.all_gather(gathered, val_local_flat, group=self.group)
         val_global = torch.cat(gathered, dim=0).contiguous()
 
         if torch.cuda.is_available():
@@ -733,4 +736,5 @@ class TStepBiem:
         else:
             raise ValueError("Unknown or missing flow type in bg_flow.")
         return vInf * speed
+
 

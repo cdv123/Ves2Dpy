@@ -60,9 +60,12 @@ def init_distributed():
     world_size = dist.get_world_size()
 
     local_rank = int(os.environ["LOCAL_RANK"])
+
+    rank = int(os.environ["RANK"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+
     torch.cuda.set_device(local_rank)
     device = torch.device(f"cuda:{local_rank}")
 
-
     print(f"Rank {local_rank}/{world_size} on GPU {local_rank}")
-    return CommInfo(local_rank, world_size, device)
+    return CommInfo(rank, world_size, device)

@@ -24,7 +24,7 @@ def check_finite(name, x, rank):
 
 
 class Poten:
-    def __init__(self, N):
+    def __init__(self, N, group=None):
         """
         Constructor for the Poten class.
 
@@ -33,6 +33,7 @@ class Poten:
             Number of points per curve.
         """
         self.N = N
+        self.group = group
         self.Nup = N * math.ceil(math.sqrt(N))
 
         # Compute singular quadrature weights and rotation matrices
@@ -725,6 +726,7 @@ class Poten:
         start,
         end,
         rank,
+        group=None,
     ):
         """
         Distributed near-singular correction.
@@ -736,6 +738,16 @@ class Poten:
 
         if tEqualS and vesicleSou.X.shape[1] == 1:
             return torch.zeros_like(vesicleTar.X)
+
+        group = self.group if group is None else group
+
+        def call_kernel_direct(*args, **kwargs):
+            if group is None:
+                return kernelDirect(*args, **kwargs)
+            try:
+                return kernelDirect(*args, group=group, **kwargs)
+            except TypeError:
+                return kernelDirect(*args, **kwargs)
 
         device = f.device
 
@@ -779,7 +791,7 @@ class Poten:
                 ids2_global[mask],
             )
 
-            farField = kernelDirect(
+            farField = call_kernel_direct(
                 vesicleUp_full.X,
                 vesicleUp_full.sa,
                 fup_full,
@@ -789,7 +801,7 @@ class Poten:
             )
 
         elif not tEqualS:
-            farField = kernelDirect(
+            farField = call_kernel_direct(
                 vesicleUp_full,
                 fup_full,
                 Xtar,
@@ -1599,3 +1611,4 @@ class Poten:
 # op = Poten(N//2)
 # D = op.stokesDLmatrix(ves)
 # print(D.shape)
+

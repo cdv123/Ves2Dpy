@@ -1,11 +1,8 @@
 import torch
 import os
 from typing import Optional
-import torch.multiprocessing as mp
-from parareal_vesnet import VesNetSolver
-
 torch.set_default_dtype(torch.float32)
-from tstep_biem import TStepBiem
+from distributed_tstep_biem_scaled import TStepBiem
 from curve_batch_compile import Curve
 import numpy as np
 from torch import distributed as dist
@@ -16,23 +13,51 @@ _worker: Optional["WorkerState"] = None
 
 class BIEMSolver:
     def __init__(
-        self, options, params, Xwalls, initPositions, rank, nv, new_num_ranks
+        self, options, params, Xwalls, initPositions, comm_info, nv, new_num_ranks
     ):
         self.options = options
         self.params = params
         self.Xwalls = Xwalls
         self.finalTime = self.params["T"]
-        self.RS = torch.zeros(3, params["nvbd"])
-        self.eta = torch.zeros(2 * params["Nbd"], params["nvbd"])
+        self.rank = comm_info.rank
+        self.device = comm_info.device
+        self.new_num_ranks = new_num_ranks
+
+        if new_num_ranks == 1:
+            sub_ranks = [self.rank]
+        else:
+            sub_ranks = list(range(new_num_ranks))
+
+        self.sub_group = dist.new_group(ranks=sub_ranks)
+        if self.rank not in sub_ranks:
+            self.active = False
+            return
+
+        self.active = True
+        self.sub_rank = sub_ranks.index(self.rank)
+        # broadcast src must be a GLOBAL rank, even with a process group.
+        self.group_root = sub_ranks[0]
+        torch.set_default_device(self.device)
+        self.params["viscCont"] = self.params["viscCont"].to(self.device)
+        self.RS = torch.zeros(3, params["nvbd"], device=self.device, dtype=initPositions.dtype)
+        self.eta = torch.zeros(2 * params["Nbd"], params["nvbd"], device=self.device, dtype=initPositions.dtype)
 
         self.oc = Curve()
-        self.tt = TStepBiem(initPositions, self.Xwalls, self.options, self.params)
+        self.tt = TStepBiem(
+            initPositions,
+            self.Xwalls,
+            self.options,
+            self.params,
+            rank=self.sub_rank,
+            size=new_num_ranks,
+            device=self.device,
+            group=self.sub_group,
+        )
         _, self.area0, self.len0 = self.oc.geomProp(initPositions)
         self.modes = torch.concatenate(
             (torch.arange(0, params["N"] // 2), torch.arange(-params["N"] // 2, 0))
         ).to(initPositions.device)
 
-        self.rank = rank
 
     def solve(
         self,
@@ -42,9 +67,15 @@ class BIEMSolver:
         start_time=0,
     ):
         torch.set_default_dtype(torch.float64)
-        positions = initPositions.clone()
+        positions = initPositions.clone().to(self.device)
         #newSigma = torch.zeros_like(sigmaStore, dtype=torch.float64) 
-        newSigma = sigmaStore.clone()
+        newSigma = sigmaStore.clone().to(self.device)
+
+        if not self.active:
+            return positions, newSigma
+
+        dist.broadcast(positions, src=self.group_root, group=self.sub_group)
+        dist.broadcast(newSigma, src=self.group_root, group=self.sub_group)
 
         if self.options["confined"]:
             self.tt.initial_confined()
@@ -57,8 +88,14 @@ class BIEMSolver:
             positionsNew, newSigma, self.eta, self.RS, _, _ = self.tt.time_step(
                 positions, newSigma, self.eta, self.RS
             )
-            self.eta = torch.zeros(2 * self.params["Nbd"], self.params["nvbd"])
-            self.RS = torch.zeros(3, self.params["nvbd"])
+            self.eta = torch.zeros(
+                2 * self.params["Nbd"], self.params["nvbd"],
+                device=self.device, dtype=positions.dtype
+            )
+            self.RS = torch.zeros(
+                3, self.params["nvbd"],
+                device=self.device, dtype=positions.dtype
+            )
             if self.options["reparameterization"]:
                 # Redistribute arc-length
                 positions0 = positionsNew.clone()
@@ -108,7 +145,16 @@ class ParallelSolver:
         self.nv = params["nv"] 
 
     def run_solver(self, positions, sigmaStore, file_name, start_time):
-        self.solver = BIEMSolver(self.options, self.params, self.Xwalls, positions, 0, self.nv, 1)
+        class _CommInfo:
+            pass
+
+        comm_info = _CommInfo()
+        comm_info.rank = self.rank
+        comm_info.device = self.device
+
+        self.solver = BIEMSolver(
+            self.options, self.params, self.Xwalls, positions, comm_info, self.nv, 1
+        )
 
         return self.solver.solve(positions, sigmaStore, file_name, start_time)
 
@@ -201,3 +247,4 @@ class ParallelSolver:
                     os.remove(file)
 
         return all_positions_prime, all_sigma_prime
+

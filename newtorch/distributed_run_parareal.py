@@ -1,13 +1,16 @@
 import torch
+import time
 import os
 import sys
+import torch.backends.cudnn as cudnn
+
+cudnn.benchmark = True
 
 torch.set_default_dtype(torch.float32)
 import numpy as np
 from curve_batch_compile import Curve
 from capsules import capsules
 import time
-from tstep_biem import TStepBiem
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from tqdm import tqdm
@@ -191,7 +194,21 @@ if __name__ == "__main__":
     ).to(X.device)  # .double()
 
     numCores = prams["nProcs"]
-    numCoresVesnet = prams["nProcsVesNet"]
+
+    # Number of ranks used by the coarse solver subgroup.  Historically this
+    # was named nProcsVesNet; keep that as the default so existing launch
+    # scripts continue to work, but allow a BIEM-specific override.
+    numCoresCoarse = prams.get("nProcsCoarseBIEM", prams.get("nProcsVesNet", numCores))
+
+    if numCoresCoarse > comm_info.numProcs:
+        raise ValueError(
+            f"coarse solver requested {numCoresCoarse} ranks, "
+            f"but world_size is only {comm_info.world_size}."
+        )
+    if prams["nv"] % numCoresCoarse != 0:
+        raise ValueError(
+            f"nv={prams['nv']} must be divisible by coarse solver ranks={numCoresCoarse}."
+        )
 
     # Window size should be divisible by number of cores
     prams["T"] /= numCores
@@ -202,11 +219,11 @@ if __name__ == "__main__":
 
     if prams["use_vesnet"]:
         coarseSolver = VesNetSolver(
-            options, coarse_prams, Xwalls, X, comm_info, nv, numCoresVesnet
+            options, coarse_prams, Xwalls, X, comm_info, nv, numCoresCoarse
         )
     else:
         coarseSolver = BIEMSolver(
-            options, coarse_prams, Xwalls, X, comm_info, nv, numCoresVesnet
+            options, coarse_prams, Xwalls, X, comm_info, nv, numCoresCoarse
         )
 
     parallelSolver = ParallelSolver(
@@ -225,6 +242,7 @@ if __name__ == "__main__":
         # FIX LATER
         print("Total time should be divisible by Parareal time")
 
+    t0 = time.time()
     for i in range(num_iter):
         X = pararealSolver.pararealSolve(
             initVesicles=X,
@@ -237,3 +255,9 @@ if __name__ == "__main__":
         )
 
     output = np.concatenate(([time_], X.cpu().numpy().T.flatten())).astype("float64")
+
+    t1 = time.time()
+
+    if comm_info.rank == 0:
+        print("Timed parareal solve:", t1 - t0)
+

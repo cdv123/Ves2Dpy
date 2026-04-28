@@ -2,20 +2,64 @@ import argparse
 from scipy.io import loadmat
 
 
+#PARAM_DEFAULTS = {
+#    "dt": 2e-6,
+#    "T": 600,
+#    "N": 32,
+#    "nv": 120,
+#    "pr": 1,
+#    "farFieldSpeed": 400,
+#    "chanWidth": 2.5,
+#    "vortexSize": 2.5,
+#    "coarse_dt": 5e-6,
+#    "nProcs": 6,
+#    # "input": "../../npy-files/shearIC.mat",
+#    "input": "../../npy-files/VF25_TG128Ves.mat",
+#    #"input": "../../npy-files/VF25_TG32Ves.mat",
+#    #"output": "output_BIEM/speed.bin",
+#    #"output": "output_BIEM/speed4.bin",
+#    "output": None,
+#    "nProcsVesNet": 6
+#}
+
 PARAM_DEFAULTS = {
-    "dt": 1e-5,
-    "T": 200,
+    "dt": 5e-6,
+    "T": 500,
     "N": 128,
     "nv": 32,
     "pr": 1,
     "farFieldSpeed": 400,
     "chanWidth": 2.5,
     "vortexSize": 2.5,
-    "coarse_dt": 1e-5,
-    "nProcs": 1,
-    "input": "../../npy-files/VF25_TG32Ves.mat",
-    "output": "output_BIEM/test.bin"
+    "coarse_dt": 2e-5,
+    "nProcs": 4,
+    # "input": "../../npy-files/shearIC.mat",
+    "input": "../../npy-files/VF25_TG128Ves.mat",
+    #"input": "../../npy-files/VF25_TG32Ves.mat",
+    #"output": "output_BIEM/speed.bin",
+    "output": None,
+    #"output": "output_BIEM/new_test.bin",
+    "nProcsVesNet": 4
 }
+
+#PARAM_DEFAULTS = {
+#    "dt": 5e-6,
+#    "T": 1000,
+#    "N": 128,
+#    "nv": 1,
+#    "pr": 1,
+#    "farFieldSpeed": 400,
+#    "chanWidth": 2.5,
+#    "vortexSize": 2.5,
+#    "coarse_dt": 1e-5,
+#    "nProcs": 2,
+#    #"input": "../../npy-files/shearIC.mat",
+#    #"input": "../../npy-files/VF25_TG128Ves.mat",
+#    "input": "../../npy-files/VF25_TG32Ves.mat",
+#    #"output": "output_BIEM/speed.bin",
+#    "output": "output_BIEM/2e5_one_ves.bin",
+#    "nProcsVesNet": 1
+#}
 
 ARG_TO_PARAM = {
     "dt": "dt",
@@ -29,7 +73,8 @@ ARG_TO_PARAM = {
     "coarse_dt": "coarse_dt",
     "nProcs": "nProcs",
     "input": "input",
-    "output": "output"
+    "output": "output",
+    "nProcsVesNet": "nProcsVesNet"
 }
 
 
@@ -66,6 +111,7 @@ def parse_cli():
         "--coarse_dt", type=float, help="Time step size of coarse solver"
     )
     parser.add_argument("--nProcs", type=int, help="Number of processes to use")
+    parser.add_argument("--nProcsVesNet", type=int, help="Number of processes to use")
 
     return parser.parse_args()
 
@@ -80,17 +126,23 @@ def modify_options_params(args, options, params):
             params[param_name] = PARAM_DEFAULTS[param_name]
 
     # Derived default depends on T
-    params["window_size"] = args.wT if args.wT is not None else min(500, params["T"])
+    params["window_size"] = args.wT if args.wT is not None else min(5000, params["T"])
 
     # Flags
     params["use_vesnet"] = args.use_vesnet
-    params["use_vesnet"] = False
+    #params["use_vesnet"] = True
 
     # Options
-    options["farField"] = args.farField if args.farField is not None else "shear"
+    options["farField"] = args.farField if args.farField is not None else "taylorGreen"
+    #options["farField"] = args.farField if args.farField is not None else "shear"
 
     # IO
     file_name = params["output"] 
-    Xics = loadmat(params["input"]).get("X")[:, : params["nv"]]
+    if params["farFieldSpeed"] == 2000:
+        Xics = loadmat(params["input"]).get("Xic")[:, : params["nv"]]
+        N = 128   
+        Xics[:N, 0] -= 0.05
+    else:
+        Xics = loadmat(params["input"]).get("X")[:, : params["nv"]]
 
     return file_name, Xics

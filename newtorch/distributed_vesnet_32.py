@@ -1,4 +1,5 @@
 # %%
+import time
 import torch
 from helper_functions import init_distributed
 
@@ -9,8 +10,7 @@ import numpy as np
 torch.set_default_dtype(torch.float32)
 import torch.backends.cudnn as cudnn
 
-cudnn.benchmark = False
-cudnn.deterministic = True
+cudnn.benchmark = True
 import torch._dynamo
 
 torch._dynamo.reset()
@@ -238,6 +238,33 @@ mlarm.relaxNetwork.model.eval()
 mlarm.tenSelfNetwork.model.eval()
 mlarm.tenAdvNetwork.model.eval()
 mlarm.mergedAdvNetwork.model.eval()
+mlarm.nearNetwork.model = torch.compile(
+    mlarm.nearNetwork.model,
+    mode="reduce-overhead",
+    dynamic=False,
+)
+
+mlarm.relaxNetwork.model = torch.compile(
+   mlarm.relaxNetwork.model,
+    mode="reduce-overhead",
+    dynamic=False,
+)
+mlarm.tenSelfNetwork.model = torch.compile(
+   mlarm.tenSelfNetwork.model,
+    mode="reduce-overhead",
+    dynamic=False,
+)
+mlarm.tenAdvNetwork.model = torch.compile(
+   mlarm.tenAdvNetwork.model,
+    mode="reduce-overhead",
+    dynamic=False,
+)
+mlarm.mergedAdvNetwork.model = torch.compile(
+    mlarm.mergedAdvNetwork.model,
+    mode="reduce-overhead",
+    dynamic=False,
+)
+
 # mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="reduce-overhead")
 # mlarm.advNetwork.model  = torch.compile(mlarm.advNetwork.model,  mode="max-autotune")
 
@@ -286,6 +313,13 @@ print("Tension dtype", Ten.dtype)
 print(f"using 3 layers, {mlarm.rbf_upsample} upsampling, saved as {fileName}")
 # while currtime < Th:
 
+with torch.no_grad():
+    X_warm = X.clone()
+    Ten_warm = Ten.clone()
+    for _ in range(3):
+        X_warm, Ten_warm = mlarm.time_step_many_noinfo(X_warm, Ten_warm, nlayers)
+t_start = time.time()
+
 # mlarm.time_step_many_noinfo = torch.compile(
 #    mlarm.time_step_many_noinfo,
 #    fullgraph=True,
@@ -315,4 +349,7 @@ for it in tqdm(range(int(Th // dt))):
         with open(fileName, "ab") as fid:
             output.tofile(fid)
 
+t_end = time.time()
+if comm_info.rank == 0:
+    print("Timed main loop:", t_end - t_start)
 torch.cuda.synchronize()

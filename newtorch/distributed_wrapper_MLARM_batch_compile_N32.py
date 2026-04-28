@@ -257,6 +257,8 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
         self.oc = oc  # curve class
         self.kappa = 1  # bending stiffness is 1 for our simulations
         self.device = device
+        torch.cuda.set_device(self.device)
+        torch.set_default_device(self.device)
         self.logger = logger
         # Flag for repulsion
         self.use_repulsion = use_repulsion
@@ -482,6 +484,7 @@ class MLARM_manyfree_py(torch.jit.ScriptModule):
             Xnew_local = self.oc.correctAreaAndLengthAugLag(
                 Xnew_local, self.area0_local, self.len0_local
             )
+        Xnew_local = Xnew_local.detach()
 
         Xnew_local = filterShape(Xnew_local.to(Xold.device), 16)
 

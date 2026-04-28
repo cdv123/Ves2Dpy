@@ -1,4 +1,5 @@
 import torch
+import time
 
 from helper_functions import CommInfo, init_distributed
 
@@ -10,7 +11,7 @@ import numpy as np
 from curve_batch_compile import Curve
 from capsules import capsules
 import time
-from distributed_tstep_biem import TStepBiem
+from distributed_tstep_biem_scaled import TStepBiem
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from tqdm import tqdm
@@ -217,6 +218,8 @@ print("sigma shape: ", sigma.shape)
 print("eta shape: ", eta.shape)
 print("RS shape: ", RS.shape)
 
+t0 = time.time()
+
 for step in tqdm(range(int(prams["T"] / prams["dt"]))):
     # Perform time step
     #print(X.dtype, sigma.dtype)
@@ -254,3 +257,7 @@ for step in tqdm(range(int(prams["T"] / prams["dt"]))):
         output = np.concatenate(([time_], X.cpu().numpy().T.flatten())).astype("float64")
         with open(fileName, "ab") as fid:
             output.tofile(fid)
+t1 = time.time()
+
+if comm_info.rank == 0:
+    print("Timed parareal solve:", t1 - t0)

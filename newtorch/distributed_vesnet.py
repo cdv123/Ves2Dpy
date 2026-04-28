@@ -1,4 +1,16 @@
 # %%
+import time
+import os
+from pathlib import Path
+
+cache_root = Path("/cosma/home/do022/dc-dubo2/torch_compile_cache")
+CACHE_FILE = Path("/cosma/home/do022/dc-dubo2/vesnet_network_compile_cache.bin")
+cache_root.mkdir(parents=True, exist_ok=True)
+
+os.environ["TORCHINDUCTOR_CACHE_DIR"] = str(cache_root)
+os.environ["TRITON_CACHE_DIR"] = str(cache_root / "triton")
+os.environ["TORCHINDUCTOR_FX_GRAPH_CACHE"] = "1"
+os.environ["TORCHINDUCTOR_AUTOGRAD_CACHE"] = "1"
 import torch
 from helper_functions import init_distributed
 comm_info = init_distributed()
@@ -10,10 +22,10 @@ torch.set_default_dtype(torch.float32)
 import torch.backends.cudnn as cudnn
 
 cudnn.benchmark = True
-import torch._dynamo
+torch.backends.cudnn.deterministic = False
+torch.use_deterministic_algorithms(False)
 from torch.profiler import profile, ProfilerActivity
 
-torch._dynamo.reset()
 # from curve_batch import Curve
 from curve_batch_compile import Curve
 
@@ -28,10 +40,13 @@ import logging
 from torch import distributed as dist
 from poten import Poten
 from parse_args import parse_cli, modify_options_params
+from pathlib import Path
+import pickle
 
 sub_ranks = list(range(comm_info.numProcs))
 print(sub_ranks)
 group = dist.new_group(ranks=sub_ranks)
+dist.barrier()
 
 
 torch.cuda.set_device(comm_info.device)
@@ -224,23 +239,53 @@ mlarm = MLARM_manyfree_py(
     group=None
 )
 
+if CACHE_FILE.exists():
+    print("Loading torch compile cache")
+    torch.compiler.load_cache_artifacts(CACHE_FILE.read_bytes())
+
 mlarm.nearNetwork.model.eval()
 mlarm.relaxNetwork.model.eval()
 mlarm.tenSelfNetwork.model.eval()
 mlarm.tenAdvNetwork.model.eval()
 mlarm.mergedAdvNetwork.model.eval()
-#mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="default")
-#
-#
-#mlarm.relaxNetwork.model = torch.compile(
-#   mlarm.relaxNetwork.model, mode="default"
+compile_kwargs = dict(
+    mode="reduce-overhead",
+    fullgraph=False,
+    dynamic=False,
+)
+#mlarm.time_step_many_noinfo = torch.compile(
+#    mlarm.time_step_many_noinfo,
+#    mode="reduce-overhead",
+#    fullgraph=False,
+#    dynamic=False,
 #)
-#mlarm.tenSelfNetwork.model = torch.compile(
-#   mlarm.tenSelfNetwork.model, mode="default"
-#)
-#mlarm.tenAdvNetwork.model = torch.compile(
-#   mlarm.tenAdvNetwork.model, mode="default"
-#)
+mlarm.nearNetwork.model = torch.compile(
+    mlarm.nearNetwork.model, 
+    mode="reduce-overhead",
+    dynamic=False,
+)
+
+mlarm.relaxNetwork.model = torch.compile(
+   mlarm.relaxNetwork.model, 
+    mode="reduce-overhead",
+    dynamic=False,
+)
+mlarm.tenSelfNetwork.model = torch.compile(
+   mlarm.tenSelfNetwork.model, 
+    mode="reduce-overhead",
+    dynamic=False,
+)
+mlarm.tenAdvNetwork.model = torch.compile(
+   mlarm.tenAdvNetwork.model, 
+    mode="reduce-overhead",
+    dynamic=False,
+)
+mlarm.mergedAdvNetwork.model = torch.compile(
+    mlarm.mergedAdvNetwork.model,
+    mode="reduce-overhead",
+    dynamic=False,
+)
+
 # print(type(mlarm.nearNetwork))
 
 area0, len0 = oc.geomProp(X)[1:]
@@ -291,6 +336,13 @@ print(f"using 3 layers, {mlarm.rbf_upsample} upsampling, saved as {fileName}")
 #    mode="reduce-overhead"
 # )
 
+with torch.no_grad():
+    X_warm = X.clone()
+    Ten_warm = Ten.clone()
+    for _ in range(3):
+        X_warm, Ten_warm = mlarm.time_step_many_noinfo(X_warm, Ten_warm, nlayers)
+t_start = time.time()
+
 # with torch.inference_mode():
 for it in tqdm(range(int(Th // dt))):
     # for it in range(20):
@@ -298,10 +350,11 @@ for it in tqdm(range(int(Th // dt))):
     # tStart = time.time()
 
     # X, Ten = mlarm.time_step_many(X, Ten)
-    with torch.inference_mode():
+    with torch.no_grad():
         Xnew, Ten = mlarm.time_step_many_noinfo(X, Ten, nlayers)
         # X, Ten = mlarm.time_step_many_noinfo_exactVelLayer(X, Ten, nlayers)
     ## np.save(f"shape_t{currtime}.npy", X)
+    X = Xnew
     # tEnd = time.time()
 
     ## Find error in area and length
@@ -332,6 +385,13 @@ for it in tqdm(range(int(Th // dt))):
     # print(f'Error in area and length: {max(errArea, errLen)}')
     # print('********************************************\n')
 
+    #if it == 0:
+    #    if comm_info.rank == 0:
+    #        artifacts = torch.compiler.save_cache_artifacts()
+    #        if artifacts is not None:
+    #            artifact_bytes, cache_info = artifacts
+    #            CACHE_FILE.write_bytes(artifact_bytes)
+    #            print("Saved compile cache:", cache_info)
     ## Save data
     if comm_info.rank == 0:
         output = np.concatenate(([currtime], X.cpu().numpy().T.flatten())).astype(
@@ -339,6 +399,10 @@ for it in tqdm(range(int(Th // dt))):
         )
         with open(fileName, "ab") as fid:
             output.tofile(fid)
+t_end = time.time()
+
+if comm_info.rank == 0:
+    print("Timed main loop:", t_end - t_start)
 
 torch.cuda.synchronize()
 torch.cuda.cudart().cudaProfilerStop()

@@ -92,6 +92,7 @@ class VesNetSolver:
         else:
             vesnet_params = params_N128
             MLARM_manyfree_py = VesNet128
+            print("128")
 
         self.rank = comm_info.rank
         torch.set_default_dtype(torch.float32)
@@ -198,6 +199,59 @@ class VesNetSolver:
         self.modes = torch.concatenate(
             (torch.arange(0, params["N"] // 2), torch.arange(-params["N"] // 2, 0))
         ).to(initPositions.device)
+        self.compile_networks()
+        self.warmup(initPositions, torch.zeros(params["N"], nv, device=device, dtype=torch.float32))
+
+    def warmup(self, initPositions: torch.Tensor, sigmaStore: torch.Tensor, n_warmup=2):
+        if self.rank >= self.new_num_ranks:
+            return
+
+        torch.set_default_device(self.device)
+        torch.set_default_dtype(torch.float32)
+
+        positions = initPositions.clone().to(self.device, dtype=torch.float32)
+        sigma = sigmaStore.clone().to(self.device, dtype=torch.float32)
+
+        # Match solve(): redistribute before stepping
+        for _ in range(10):
+            positions, flag = self.oc.redistributeArcLength(positions, self.modes)
+            if flag:
+                break
+
+        with torch.no_grad():
+            for _ in range(n_warmup):
+                positions, sigma = self.mlarm.time_step_many_noinfo(
+                    positions, sigma, self.nlayers
+                )
+
+        torch.cuda.synchronize()
+        dist.barrier(group=self.sub_group)
+    def compile_networks(self):
+        self.mlarm.nearNetwork.model = torch.compile(
+            self.mlarm.nearNetwork.model,
+            mode="reduce-overhead",
+            dynamic=False,
+        )
+        self.mlarm.relaxNetwork.model = torch.compile(
+            self.mlarm.relaxNetwork.model,
+            mode="reduce-overhead",
+            dynamic=False,
+        )
+        self.mlarm.tenSelfNetwork.model = torch.compile(
+            self.mlarm.tenSelfNetwork.model,
+            mode="reduce-overhead",
+            dynamic=False,
+        )
+        self.mlarm.tenAdvNetwork.model = torch.compile(
+            self.mlarm.tenAdvNetwork.model,
+            mode="reduce-overhead",
+            dynamic=False,
+        )
+        self.mlarm.mergedAdvNetwork.model = torch.compile(
+            self.mlarm.mergedAdvNetwork.model,
+            mode="reduce-overhead",
+            dynamic=False,
+        )
 
     def solve(
         self,
@@ -231,12 +285,12 @@ class VesNetSolver:
         for i in tqdm(range(num_steps)):
             start_time += self.params["dt"]
 
-            with torch.inference_mode():
-                positions, sigmaStore = self.mlarm.time_step_many_noinfo(
+            with torch.no_grad():
+                positionsNew, sigmaStore = self.mlarm.time_step_many_noinfo(
                     positions, sigmaStore, self.nlayers
                 )
 
-            #positionsNew0 = positionsNew.clone()
+            positions = positionsNew
             #for _ in range(5):
             #    positionsNew, allGood = self.oc.redistributeArcLength(positionsNew, self.modes)
             #positions = self.oc.alignCenterAngle(positionsNew0, positionsNew)

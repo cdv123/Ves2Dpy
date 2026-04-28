@@ -756,9 +756,10 @@ class Curve:
                 optimizer.zero_grad()
                 a, l, loss_fun, loss_cons = model(lamb, mu)
                 if iter % 15 == 0:
-                    print(
-                        f"{iter} in ADAM, loss_fun is {loss_fun:.5e}, loss_cons is {loss_cons:.5e}, rel err of a {max_rel_err(a, area0):.5e}, of l {max_rel_err(l, length0):.5e}"
-                    )
+                    #print(
+                    #    f"{iter} in ADAM, loss_fun is {loss_fun:.5e}, loss_cons is {loss_cons:.5e}, rel err of a {max_rel_err(a, area0):.5e}, of l {max_rel_err(l, length0):.5e}"
+                    #)
+                    pass
                 if (
                     loss_fun < tolFunctional
                     and max_rel_err(a, area0) < tolConstraint
@@ -782,7 +783,8 @@ class Curve:
 
         while it < maxiter:
             if it % 5 == 0:
-                print(f"outside iter {it}")
+                #print(f"outside iter {it}")
+                pass
             a, l, flag = train_model(aug_lag_model, lamb, mu)
             if flag:
                 break
@@ -903,9 +905,10 @@ class Curve:
                 optimizer.zero_grad()
                 a, l, loss_fun, loss_cons = model(lamb, mu)
                 if iter % 15 == 0:
-                    self.logger.info(
-                        f"{iter} in ADAM, loss_fun is {loss_fun:.5e}, loss_cons is {loss_cons:.5e}, rel err of a {max_rel_err(a, area0):.5e}, of l {max_rel_err(l, length0):.5e}"
-                    )
+                    #self.logger.info(
+                    #    f"{iter} in ADAM, loss_fun is {loss_fun:.5e}, loss_cons is {loss_cons:.5e}, rel err of a {max_rel_err(a, area0):.5e}, of l {max_rel_err(l, length0):.5e}"
+                    #)
+                    pass
                 if (
                     loss_fun < tolFunctional
                     and max_rel_err(a, area0) < tolConstraint
@@ -928,7 +931,8 @@ class Curve:
 
         while it < maxiter:
             if it % 5 == 0:
-                self.logger.info(f"outside iter {it}")
+                #self.logger.info(f"outside iter {it}")
+                pass
             a, l, flag = train_model(aug_lag_model, lamb, mu)
             if flag:
                 break
