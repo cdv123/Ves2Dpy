@@ -3,16 +3,9 @@ import time
 import os
 from pathlib import Path
 
-cache_root = Path("/cosma/home/do022/dc-dubo2/torch_compile_cache")
-CACHE_FILE = Path("/cosma/home/do022/dc-dubo2/vesnet_network_compile_cache.bin")
-cache_root.mkdir(parents=True, exist_ok=True)
-
-os.environ["TORCHINDUCTOR_CACHE_DIR"] = str(cache_root)
-os.environ["TRITON_CACHE_DIR"] = str(cache_root / "triton")
-os.environ["TORCHINDUCTOR_FX_GRAPH_CACHE"] = "1"
-os.environ["TORCHINDUCTOR_AUTOGRAD_CACHE"] = "1"
 import torch
 from helper_functions import init_distributed
+
 comm_info = init_distributed()
 torch.cuda.set_device(comm_info.device)
 
@@ -65,12 +58,6 @@ logger.addHandler(handler)
 
 # Load curve_py
 oc = Curve(logger)
-
-# File name
-# fileName = './output_N128/linshi.bin'  # To save simulation data
-# fileName = './output_N128/ls.bin'  # To save simulation data
-# fileName = './output_N128/lsls.bin'  # To save simulation data
-# fileName = './output_N128/TG48.bin'  # To save simulation data
 
 
 def set_bg_flow(bgFlow, speed):
@@ -154,19 +141,11 @@ print(f"area0 is {area0}")
 print(f"len0 is {len0}")
 X = X0.clone().to(device)
 
-# %matplotlib inline
-# plt.figure()
-# plt.plot(X0[:128], X0[128:])
-# plt.axis('scaled')
-# plt.show()
 
 # %%
 print(f"We have {nv} vesicles")
 Ten = torch.from_numpy(np.zeros((128, nv))).to(device).float()
 
-# Build MLARM class to take time steps using networks
-# Load the normalization (mean, std) values for the networks
-# ADV Net retrained in Oct 2024
 adv_net_input_norm = np.load("../../files2runVes2Dpy/2024Oct_adv_fft_tot_in_para.npy")
 adv_net_output_norm = np.load("../../files2runVes2Dpy/2024Oct_adv_fft_tot_out_para.npy")
 # Relax Net for dt = 1E-5 (DIFF_June8)
@@ -236,12 +215,8 @@ mlarm = MLARM_manyfree_py(
     rank=comm_info.rank,
     size=comm_info.numProcs,
     nv=nv,
-    group=None
+    group=None,
 )
-
-if CACHE_FILE.exists():
-    print("Loading torch compile cache")
-    torch.compiler.load_cache_artifacts(CACHE_FILE.read_bytes())
 
 mlarm.nearNetwork.model.eval()
 mlarm.relaxNetwork.model.eval()
@@ -253,30 +228,30 @@ compile_kwargs = dict(
     fullgraph=False,
     dynamic=False,
 )
-#mlarm.time_step_many_noinfo = torch.compile(
+# mlarm.time_step_many_noinfo = torch.compile(
 #    mlarm.time_step_many_noinfo,
 #    mode="reduce-overhead",
 #    fullgraph=False,
 #    dynamic=False,
-#)
+# )
 mlarm.nearNetwork.model = torch.compile(
-    mlarm.nearNetwork.model, 
+    mlarm.nearNetwork.model,
     mode="reduce-overhead",
     dynamic=False,
 )
 
 mlarm.relaxNetwork.model = torch.compile(
-   mlarm.relaxNetwork.model, 
+    mlarm.relaxNetwork.model,
     mode="reduce-overhead",
     dynamic=False,
 )
 mlarm.tenSelfNetwork.model = torch.compile(
-   mlarm.tenSelfNetwork.model, 
+    mlarm.tenSelfNetwork.model,
     mode="reduce-overhead",
     dynamic=False,
 )
 mlarm.tenAdvNetwork.model = torch.compile(
-   mlarm.tenAdvNetwork.model, 
+    mlarm.tenAdvNetwork.model,
     mode="reduce-overhead",
     dynamic=False,
 )
@@ -343,56 +318,14 @@ with torch.no_grad():
         X_warm, Ten_warm = mlarm.time_step_many_noinfo(X_warm, Ten_warm, nlayers)
 t_start = time.time()
 
-# with torch.inference_mode():
 for it in tqdm(range(int(Th // dt))):
-    # for it in range(20):
-    # Take a time step
-    # tStart = time.time()
-
     # X, Ten = mlarm.time_step_many(X, Ten)
     with torch.no_grad():
         Xnew, Ten = mlarm.time_step_many_noinfo(X, Ten, nlayers)
         # X, Ten = mlarm.time_step_many_noinfo_exactVelLayer(X, Ten, nlayers)
     ## np.save(f"shape_t{currtime}.npy", X)
     X = Xnew
-    # tEnd = time.time()
-
-    ## Find error in area and length
-    # area, length = oc.geomProp(X)[1:]
-    # errArea = torch.max(torch.abs(area - mlarm.area0) / mlarm.area0)
-    # errLen = torch.max(torch.abs(length - mlarm.len0) / mlarm.len0)
-    # if options["reparameterization"]:
-        #if False: 
-        #    # Redistribute arc-length
-        #    Xnew0 = Xnew.clone()
-        #    for _ in range(5):
-        #        Xnew, allGood = oc.redistributeArcLength(Xnew, modes)
-        #    X = oc.alignCenterAngle(Xnew0, Xnew)
-        #else:
-        #    X = Xnew
-
-        #if True:
-        #    X = oc.correctAreaAndLengthAugLag(X.float(), area0, len0)
-    # Redistribute arc-length
-    ## Update counter and time
-    ## it += 1
     currtime += dt
-
-    ## Print time step info
-    # print('********************************************')
-    # print(f'{it+1}th time step for N=128, time: {currtime}')
-    # print(f'Solving with networks takes {tEnd - tStart} sec.')
-    # print(f'Error in area and length: {max(errArea, errLen)}')
-    # print('********************************************\n')
-
-    #if it == 0:
-    #    if comm_info.rank == 0:
-    #        artifacts = torch.compiler.save_cache_artifacts()
-    #        if artifacts is not None:
-    #            artifact_bytes, cache_info = artifacts
-    #            CACHE_FILE.write_bytes(artifact_bytes)
-    #            print("Saved compile cache:", cache_info)
-    ## Save data
     if comm_info.rank == 0:
         output = np.concatenate(([currtime], X.cpu().numpy().T.flatten())).astype(
             "float64"

@@ -73,10 +73,10 @@ def count_vesicles_in_cell_single_file(filename, vsize=5.0, drop_first=False):
 
 
 fine_result = count_vesicles_in_cell_single_file(
-    "taylorResults/N128biem32.bin", vsize=2.5
+    "taylorResults/128Vesicles/biem1e6.bin", vsize=5
 )
 coarse_result = count_vesicles_in_cell_single_file(
-    "taylorResults/N128coarseBiem32.bin", vsize=2.5
+    "taylorResults/128Vesicles/vesnet1e6.bin", vsize=5
 )
 # parareal_result = count_vesicles_in_cell_single_file(
 #    "taylorResults/pararealVesNetSameDt.bin", vsize=2.5
@@ -85,10 +85,10 @@ coarse_result = count_vesicles_in_cell_single_file(
 #    "taylorResults/pararealVesNet6e51e5.bin", vsize=2.5
 # )
 fine_parareal = count_vesicles_in_cell_single_file(
-    "taylorResults/parareal5e62e5Vesnet.bin", vsize=2.5
+    "taylorResults/128Vesicles/parareal4e61e6Vesnet.bin", vsize=5
 )
 coarse_parareal = count_vesicles_in_cell_single_file(
-    "taylorResults/parareal5e62e5Biem.bin", vsize=2.5
+    "taylorResults/128Vesicles/parareal4e61e6biem.bin", vsize=5
 )
 
 plt.figure(figsize=(7, 5))

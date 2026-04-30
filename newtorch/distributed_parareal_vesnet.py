@@ -10,77 +10,106 @@ import numpy as np
 from tqdm import tqdm
 
 params_N128 = {
-    "adv_net_input_norm": np.load("../../files2runVes2Dpy/2024Oct_adv_fft_tot_in_para.npy"),
-    "adv_net_output_norm": np.load("../../files2runVes2Dpy/2024Oct_adv_fft_tot_out_para.npy"),
-
-    "relax_net_input_norm": np.array([
-        -8.430413700466488e-09,
-        0.06278684735298157,
-        6.290720477863943e-08,
-        0.13339413702487946,
-    ]),
-    "relax_net_output_norm": np.array([
-        -2.884585348361668e-10,
-        0.00020574081281665713,
-        -5.137390512999218e-10,
-        0.0001763451291481033,
-    ]),
-
+    "adv_net_input_norm": np.load(
+        "../../files2runVes2Dpy/2024Oct_adv_fft_tot_in_para.npy"
+    ),
+    "adv_net_output_norm": np.load(
+        "../../files2runVes2Dpy/2024Oct_adv_fft_tot_out_para.npy"
+    ),
+    "relax_net_input_norm": np.array(
+        [
+            -8.430413700466488e-09,
+            0.06278684735298157,
+            6.290720477863943e-08,
+            0.13339413702487946,
+        ]
+    ),
+    "relax_net_output_norm": np.array(
+        [
+            -2.884585348361668e-10,
+            0.00020574081281665713,
+            -5.137390512999218e-10,
+            0.0001763451291481033,
+        ]
+    ),
     "nearNetInputNorm": np.load("../../files2runVes2Dpy/in_param_disth_allmode.npy"),
     "nearNetOutputNorm": np.load("../../files2runVes2Dpy/out_param_disth_allmode.npy"),
-
-    "tenSelfNetInputNorm": np.array([
-        0.00017108717293012887,
-        0.06278623640537262,
-        0.002038202714174986,
-        0.13337858021259308,
-    ]),
-    "tenSelfNetOutputNorm": np.array([
-        337.7627868652344,
-        466.6429138183594,
-    ]),
-
-    "tenAdvNetInputNorm": np.load("../../files2runVes2Dpy/2024Oct_advten_in_para_allmodes.npy"),
-    "tenAdvNetOutputNorm": np.load("../../files2runVes2Dpy/2024Oct_advten_out_para_allmodes.npy"),
+    "tenSelfNetInputNorm": np.array(
+        [
+            0.00017108717293012887,
+            0.06278623640537262,
+            0.002038202714174986,
+            0.13337858021259308,
+        ]
+    ),
+    "tenSelfNetOutputNorm": np.array(
+        [
+            337.7627868652344,
+            466.6429138183594,
+        ]
+    ),
+    "tenAdvNetInputNorm": np.load(
+        "../../files2runVes2Dpy/2024Oct_advten_in_para_allmodes.npy"
+    ),
+    "tenAdvNetOutputNorm": np.load(
+        "../../files2runVes2Dpy/2024Oct_advten_out_para_allmodes.npy"
+    ),
 }
 
 
 params_N32 = {
-    "adv_net_input_norm": np.load("/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/adv_trained/2024Oct_advfft_in_para_downsample_all_mode.npy"),
-    "adv_net_output_norm": np.load("/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/adv_trained/2024Oct_advfft_out_para_downsample_all_mode.npy"),
-
-    "relax_net_input_norm": np.array([
-        -1.5200416214611323e-07,
-        0.06278670579195023,
-        -2.5547041104800883e-07,
-        0.13339416682720184,
-    ]),
-    "relax_net_output_norm": np.array([
-        -2.329148207635967e-09,
-        0.00020403489179443568,
-        -1.5361016902915026e-09,
-        0.00017457373905926943,
-    ]),
-
-    "nearNetInputNorm": np.load("/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/near_trained/in_param_downsample32_allmode.npy"),
-    "nearNetOutputNorm": np.load("/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/near_trained/out_param_downsample32_allmode.npy"),
-
-    "tenSelfNetInputNorm": np.array([
-        0.00016983709065243602,
-        0.06278808414936066,
-        0.0020364541560411453,
-        0.13337676227092743,
-        6.277393817901611,
-        9.243043899536133,
-    ]),
-    "tenSelfNetOutputNorm": np.array([
-        337.7682800292969,
-        458.4842834472656,
-    ]),
-
-    "tenAdvNetInputNorm": np.load("/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/advten_trained_downsample32/2024Nov_advten_ds32_in_para_allmodes.npy"),
-    "tenAdvNetOutputNorm": np.load("/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/advten_trained_downsample32/2024Nov_advten_ds32_out_para_allmodes.npy"),
+    "adv_net_input_norm": np.load(
+        "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/adv_trained/2024Oct_advfft_in_para_downsample_all_mode.npy"
+    ),
+    "adv_net_output_norm": np.load(
+        "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/adv_trained/2024Oct_advfft_out_para_downsample_all_mode.npy"
+    ),
+    "relax_net_input_norm": np.array(
+        [
+            -1.5200416214611323e-07,
+            0.06278670579195023,
+            -2.5547041104800883e-07,
+            0.13339416682720184,
+        ]
+    ),
+    "relax_net_output_norm": np.array(
+        [
+            -2.329148207635967e-09,
+            0.00020403489179443568,
+            -1.5361016902915026e-09,
+            0.00017457373905926943,
+        ]
+    ),
+    "nearNetInputNorm": np.load(
+        "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/near_trained/in_param_downsample32_allmode.npy"
+    ),
+    "nearNetOutputNorm": np.load(
+        "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/near_trained/out_param_downsample32_allmode.npy"
+    ),
+    "tenSelfNetInputNorm": np.array(
+        [
+            0.00016983709065243602,
+            0.06278808414936066,
+            0.0020364541560411453,
+            0.13337676227092743,
+            6.277393817901611,
+            9.243043899536133,
+        ]
+    ),
+    "tenSelfNetOutputNorm": np.array(
+        [
+            337.7682800292969,
+            458.4842834472656,
+        ]
+    ),
+    "tenAdvNetInputNorm": np.load(
+        "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/advten_trained_downsample32/2024Nov_advten_ds32_in_para_allmodes.npy"
+    ),
+    "tenAdvNetOutputNorm": np.load(
+        "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/advten_trained_downsample32/2024Nov_advten_ds32_out_para_allmodes.npy"
+    ),
 }
+
 
 class VesNetSolver:
     def __init__(
@@ -101,20 +130,16 @@ class VesNetSolver:
         self.device = device
         cur_dtype = torch.float32
 
-        # Build MLARM class to take time steps using networks
-        # Load the normalization (mean, std) values for the networks
-        # ADV Net retrained in Oct 2024
-        adv_net_input_norm = vesnet_params["adv_net_input_norm"] 
+        adv_net_input_norm = vesnet_params["adv_net_input_norm"]
         adv_net_output_norm = vesnet_params["adv_net_output_norm"]
-        # Relax Net for dt = 1E-5 (DIFF_June8)
+
         relax_net_input_norm = vesnet_params["relax_net_input_norm"]
         relax_net_output_norm = vesnet_params["relax_net_output_norm"]
-        nearNetInputNorm = vesnet_params["nearNetInputNorm"] 
+        nearNetInputNorm = vesnet_params["nearNetInputNorm"]
         nearNetOutputNorm = vesnet_params["nearNetOutputNorm"]
 
-        # self ten network updated by using a 156k dataset
         tenSelfNetInputNorm = vesnet_params["tenSelfNetInputNorm"]
-        tenSelfNetOutputNorm = vesnet_params["tenSelfNetOutputNorm"] 
+        tenSelfNetOutputNorm = vesnet_params["tenSelfNetOutputNorm"]
 
         tenAdvNetInputNorm = vesnet_params["tenAdvNetInputNorm"]
         tenAdvNetOutputNorm = vesnet_params["tenAdvNetOutputNorm"]
@@ -154,7 +179,7 @@ class VesNetSolver:
             rank=comm_info.rank,
             size=new_num_ranks,
             nv=nv,
-            group=self.sub_group
+            group=self.sub_group,
         )
 
         self.mlarm.nearNetwork.model.eval()
@@ -162,27 +187,13 @@ class VesNetSolver:
         self.mlarm.tenSelfNetwork.model.eval()
         self.mlarm.tenAdvNetwork.model.eval()
         self.mlarm.mergedAdvNetwork.model.eval()
-        #self.mlarm.nearNetwork.model = torch.compile(
-        #    self.mlarm.nearNetwork.model, mode="reduce-overhead"
-        #)
-        # self.mlarm.advNetwork.model  = torch.compile(self.mlarm.advNetwork.model,  mode="max-autotune")
-        #self.mlarm.relaxNetwork.model = torch.compile(
-        #    self.mlarm.relaxNetwork.model, mode="reduce-overhead"
-        #)
-        #self.mlarm.tenSelfNetwork.model = torch.compile(
-        #    self.mlarm.tenSelfNetwork.model, mode="reduce-overhead"
-        #)
-        #self.mlarm.tenAdvNetwork.model = torch.compile(
-        #    self.mlarm.tenAdvNetwork.model, mode="reduce-overhead"
-        #)
-
         self.area0, self.len0 = self.oc.geomProp(initPositions)[1:]
 
         self.mlarm.area0 = self.area0
         # mlarm.area0 = torch.ones((nv), device=X.device, dtype=torch.float32) * 0.0524
         self.mlarm.len0 = self.len0
         self.mlarm.area0_local = self.area0[self.mlarm.start : self.mlarm.end]
-        self.mlarm.len0_local = self.len0[self.mlarm.start : self.mlarm.end] 
+        self.mlarm.len0_local = self.len0[self.mlarm.start : self.mlarm.end]
         # mlarm.len0 = torch.ones((nv), device=X.device, dtype=torch.float32)
         self.mlarm.op = Poten(params["N"])
 
@@ -200,7 +211,10 @@ class VesNetSolver:
             (torch.arange(0, params["N"] // 2), torch.arange(-params["N"] // 2, 0))
         ).to(initPositions.device)
         self.compile_networks()
-        self.warmup(initPositions, torch.zeros(params["N"], nv, device=device, dtype=torch.float32))
+        self.warmup(
+            initPositions,
+            torch.zeros(params["N"], nv, device=device, dtype=torch.float32),
+        )
 
     def warmup(self, initPositions: torch.Tensor, sigmaStore: torch.Tensor, n_warmup=2):
         if self.rank >= self.new_num_ranks:
@@ -226,6 +240,7 @@ class VesNetSolver:
 
         torch.cuda.synchronize()
         dist.barrier(group=self.sub_group)
+
     def compile_networks(self):
         self.mlarm.nearNetwork.model = torch.compile(
             self.mlarm.nearNetwork.model,
@@ -291,11 +306,6 @@ class VesNetSolver:
                 )
 
             positions = positionsNew
-            #for _ in range(5):
-            #    positionsNew, allGood = self.oc.redistributeArcLength(positionsNew, self.modes)
-            #positions = self.oc.alignCenterAngle(positionsNew0, positionsNew)
-
-            #positions = self.oc.correctAreaAndLengthAugLag(positions.float(), self.area0, self.len0)
 
             if out_file_name is not None:
                 output = np.concatenate(

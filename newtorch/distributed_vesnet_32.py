@@ -46,12 +46,6 @@ logger.addHandler(handler)
 # Load curve_py
 oc = Curve(logger)
 
-# File name
-# fileName = './output_N128/linshi.bin'  # To save simulation data
-# fileName = './output_N128/ls.bin'  # To save simulation data
-# fileName = './output_N128/lsls.bin'  # To save simulation data
-# fileName = './output_N128/TG48.bin'  # To save simulation data
-
 
 def set_bg_flow(bgFlow, speed):
     def get_flow(X):
@@ -146,9 +140,6 @@ X = X0.clone().to(device)
 print(f"We have {nv} vesicles")
 Ten = torch.from_numpy(np.zeros((32, nv))).to(device).float()
 
-# Build MLARM class to take time steps using networks
-# Load the normalization (mean, std) values for the networks
-# ADV Net retrained in Oct 2024
 adv_net_input_norm = np.load(
     "/cosma/home/do022/dc-dubo2/vesicle-fork/downsample32/adv_trained/2024Oct_advfft_in_para_downsample_all_mode.npy"
 )
@@ -230,7 +221,7 @@ mlarm = MLARM_manyfree_py(
     rank=comm_info.rank,
     size=comm_info.numProcs,
     nv=nv,
-    group=group
+    group=group,
 )
 
 mlarm.nearNetwork.model.eval()
@@ -245,17 +236,17 @@ mlarm.nearNetwork.model = torch.compile(
 )
 
 mlarm.relaxNetwork.model = torch.compile(
-   mlarm.relaxNetwork.model,
+    mlarm.relaxNetwork.model,
     mode="reduce-overhead",
     dynamic=False,
 )
 mlarm.tenSelfNetwork.model = torch.compile(
-   mlarm.tenSelfNetwork.model,
+    mlarm.tenSelfNetwork.model,
     mode="reduce-overhead",
     dynamic=False,
 )
 mlarm.tenAdvNetwork.model = torch.compile(
-   mlarm.tenAdvNetwork.model,
+    mlarm.tenAdvNetwork.model,
     mode="reduce-overhead",
     dynamic=False,
 )
@@ -264,20 +255,6 @@ mlarm.mergedAdvNetwork.model = torch.compile(
     mode="reduce-overhead",
     dynamic=False,
 )
-
-# mlarm.nearNetwork.model = torch.compile(mlarm.nearNetwork.model, mode="reduce-overhead")
-# mlarm.advNetwork.model  = torch.compile(mlarm.advNetwork.model,  mode="max-autotune")
-
-# mlarm.relaxNetwork.model = torch.compile(
-#    mlarm.relaxNetwork.model, mode="reduce-overhead"
-# )
-# mlarm.tenSelfNetwork.model = torch.compile(
-#    mlarm.tenSelfNetwork.model, mode="reduce-overhead"
-# )
-# mlarm.tenAdvNetwork.model = torch.compile(
-#    mlarm.tenAdvNetwork.model, mode="reduce-overhead"
-# )
-# print(type(mlarm.nearNetwork))
 
 area0, len0 = oc.geomProp(X)[1:]
 mlarm.area0 = area0
@@ -320,24 +297,11 @@ with torch.no_grad():
         X_warm, Ten_warm = mlarm.time_step_many_noinfo(X_warm, Ten_warm, nlayers)
 t_start = time.time()
 
-# mlarm.time_step_many_noinfo = torch.compile(
-#    mlarm.time_step_many_noinfo,
-#    fullgraph=True,
-#    mode="reduce-overhead"
-# )
 
 # with torch.inference_mode():
 for it in tqdm(range(int(Th // dt))):
-    # for it in range(20):
-    # Take a time step
-    # tStart = time.time()
-
-    # X, Ten = mlarm.time_step_many(X, Ten)
     with torch.no_grad():
         X, Ten = mlarm.time_step_many_noinfo(X, Ten, nlayers)
-        # X, Ten = mlarm.time_step_many_noinfo_exactVelLayer(X, Ten, nlayers)
-    ## np.save(f"shape_t{currtime}.npy", X)
-    # tEnd = time.time()
 
     currtime += dt
 

@@ -115,7 +115,7 @@ if __name__ == "__main__":
     if prams["nv"] == 1:
         Xics = Xics - Xics.mean()
 
-    oc = Curve()  # You need to define this with required methods
+    oc = Curve()
 
     # ------------------------------
     # Create geometry for confinement
@@ -195,9 +195,6 @@ if __name__ == "__main__":
 
     numCores = prams["nProcs"]
 
-    # Number of ranks used by the coarse solver subgroup.  Historically this
-    # was named nProcsVesNet; keep that as the default so existing launch
-    # scripts continue to work, but allow a BIEM-specific override.
     numCoresCoarse = prams.get("nProcsCoarseBIEM", prams.get("nProcsVesNet", numCores))
 
     if numCoresCoarse > comm_info.numProcs:
@@ -260,4 +257,3 @@ if __name__ == "__main__":
 
     if comm_info.rank == 0:
         print("Timed parareal solve:", t1 - t0)
-

@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from load_ves2d_file import load_ves2d_file
 
 # --- Load data ---
-filename = "Verification/TwoVesicles/pararealVesNet/oneIter2e5_5e6TwoCore.bin"
+filename = "taylorResults/128Vesicles/biem1e6.bin"
 vesx, vesy, time, N, nv, xinit, yinit = load_ves2d_file(filename)
 
 ntime = time.size
@@ -13,7 +13,7 @@ ntime = time.size
 # ymin, ymax = vesy.min(), vesy.max()
 
 # --- Time loop ---
-for it in range(0, ntime, 10):
+for it in range(0, ntime, 100):
     plt.figure(1)
     plt.clf()
 

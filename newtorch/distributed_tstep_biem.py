@@ -58,7 +58,7 @@ class TStepBiem:
     global gathers required by the replicated GMRES are performed.
     """
 
-    def __init__(self, X, Xwalls, options, prams, rank, size, device):
+    def __init__(self, X, Xwalls, options, prams, rank, size, device, group=None):
         oc = Curve()
 
         self.Xwalls = Xwalls
@@ -67,6 +67,7 @@ class TStepBiem:
         self.dt = prams["dt"]
         self.rank = rank
         self.size = size
+        self.group = group
         self.nv = X.shape[1]
         if self.nv % size != 0:
             raise ValueError(
@@ -103,7 +104,7 @@ class TStepBiem:
         self.repStrength = prams["repStrength"]
         self.minDist = prams["minDist"]
 
-        self.op = Poten(prams["N"])
+        self.op = Poten(prams["N"], group=self.group)
         self.usePreco = options["usePreco"]
         self.matFreeWalls = options.get("matFreeWalls", False)
 
@@ -149,10 +150,29 @@ class TStepBiem:
         else:
             self.opWall = None
 
+            N = prams["N"]
+
+        self._local_force_shape = (2 * N, self.chunk)
+        self._local_rhs_shape = (3 * N * self.chunk,)
+        self._local_val_shape = (3 * N * self.chunk,)
+
+        self._gather_rhs_buf = [
+            torch.empty(self._local_rhs_shape, device=self.device)
+            for _ in range(self.size)
+        ]
+        self._gather_f_buf = [
+            torch.empty(self._local_force_shape, device=self.device)
+            for _ in range(self.size)
+        ]
+        self._gather_val_buf = [
+            torch.empty(self._local_val_shape, device=self.device)
+            for _ in range(self.size)
+        ]
+
     def initial_confined(self):
         Nbd = self.Xwalls.shape[0] // 2
         nvbd = self.Xwalls.shape[1]
-        self.opWall = Poten(Nbd)
+        self.opWall = Poten(Nbd, group=self.group)
         uwalls = self.farField([])
         self.walls = capsules(
             self.Xwalls, None, uwalls, torch.zeros(nvbd, 1), torch.zeros(nvbd, 1)
@@ -173,33 +193,9 @@ class TStepBiem:
     def _torch_to_cupy(self, x):
         return cp.fromDlpack(torch.utils.dlpack.to_dlpack(x.contiguous()))
 
-    def _gather_cat(self, local_tensor, gather_buf, dim):
-        """Return global tensor assembled across ranks; no-op for size == 1."""
-        local_tensor = local_tensor.contiguous()
-        if self.size == 1:
-            return local_tensor
-        dist.all_gather(gather_buf, local_tensor)
-        return torch.cat(gather_buf, dim=dim).contiguous()
-
-    def _gather_cat_dynamic(self, local_tensor, dim):
-        """Like _gather_cat, but allocates buffers for uncommon shapes."""
-        local_tensor = local_tensor.contiguous()
-        if self.size == 1:
-            return local_tensor
-        gathered = [torch.empty_like(local_tensor) for _ in range(self.size)]
-        dist.all_gather(gathered, local_tensor)
-        return torch.cat(gathered, dim=dim).contiguous()
-
-    def _gather_flat_preconditioner(self, local_flat):
-        local_flat = local_flat.contiguous()
-        if self.size == 1:
-            return local_flat
-        gathered = [torch.empty_like(local_flat) for _ in range(self.size)]
-        dist.all_gather(gathered, local_flat)
-        return torch.cat(gathered, dim=0).contiguous()
-
     def _build_timestep_cache(self, Xstore, sigStore):
         self._vesicle = capsules(Xstore, sigStore, None, self.kappa, self.viscCont)
+        self.op._dist_rbf_cache = {}
 
         Xstore_local = Xstore[:, self.start : self.end].to(self.device)
         sigStore_local = sigStore[:, self.start : self.end].to(self.device)
@@ -221,9 +217,6 @@ class TStepBiem:
 
         # Build these once per step, not once per matvec.
         self.Galpert_local = self.op.stokesSLmatrix(self._vesicle_local).contiguous()
-        self._local_force_shape = (2 * N, self.chunk)
-        self._local_rhs_shape = (3 * N * self.chunk,)
-        self._local_val_shape = (3 * N * self.chunk,)
 
         self.NearV2V = scalableNearZoneInfo(
             Xstore,
@@ -231,19 +224,6 @@ class TStepBiem:
             local_start=self.start,
             local_end=self.end,
         )
-
-        self._gather_rhs_buf = [
-            torch.empty(self._local_rhs_shape, device=self.device)
-            for _ in range(self.size)
-        ]
-        self._gather_f_buf = [
-            torch.empty(self._local_force_shape, device=self.device)
-            for _ in range(self.size)
-        ]
-        self._gather_val_buf = [
-            torch.empty(self._local_val_shape, device=self.device)
-            for _ in range(self.size)
-        ]
 
         self.SLP = self._make_global_diag_slp()
 
@@ -291,7 +271,12 @@ class TStepBiem:
             vself_local = self.op.exactStokesSLdiag(
                 self._vesicle_local, self.Galpert_local, f_local
             ).contiguous()
-            return self._gather_cat_dynamic(vself_local, dim=1)
+            #vself_local = self.op.exactStokesSLdiag_matrix_free(
+            #    self._vesicle_local, self.Galpert_local, f_local
+            #).contiguous()
+            gathered = [torch.empty_like(vself_local) for _ in range(self.size)]
+            dist.all_gather(gathered, vself_local, group=self.group)
+            return torch.cat(gathered, dim=1).contiguous()
 
         return _slp
 
@@ -337,8 +322,15 @@ class TStepBiem:
                 self.chunk,
                 self.device,
             )
-            repulsion_global = self._gather_cat_dynamic(repulsion_local, dim=1)
+            repulsion_gather = [
+                torch.empty_like(repulsion_local) for _ in range(self.size)
+            ]
+            dist.all_gather(repulsion_gather, repulsion_local, group=self.group)
+            repulsion_global = torch.cat(repulsion_gather, dim=1).contiguous()
 
+            #Frepulsion_local = self.op.exactStokesSLdiag(
+            #    vesicle_local, self.Galpert_local, repulsion_local
+            #)
             Frepulsion_local = self.op.exactStokesSLdiag(
                 vesicle_local, self.Galpert_local, repulsion_local
             )
@@ -354,6 +346,7 @@ class TStepBiem:
                 self.start,
                 self.end,
                 self.rank,
+                group=self.group,
             )
             rhs1_local = rhs1_local + self.dt * Frepulsion_local @ torch.diag(
                 1.0 / alpha_local
@@ -366,16 +359,17 @@ class TStepBiem:
         rhs_local = (
             torch.cat([rhs1_local, rhs2_local], dim=0).T.reshape(-1).contiguous()
         )
+        dist.all_gather(self._gather_rhs_buf, rhs_local, group=self.group)
         self._rhs_local = rhs_local
-        self._rhs = self._gather_cat(rhs_local, self._gather_rhs_buf, dim=0)
+        self._rhs = torch.cat(self._gather_rhs_buf, dim=0).contiguous()
 
     def time_step(self, Xstore, sigStore, etaStore, RSstore):
-        self.start_time = time.perf_counter()
+        # self.start_time = time.perf_counter()
         self.reset_profile()
         self._build_timestep_cache(Xstore, sigStore)
-        self.prof["cache_total"] = time.perf_counter() - self.start_time
+        # self.prof["cache_total"] = time.perf_counter() - self.start_time
         self._build_block_diagonal_preconditioner()
-        self.prof["preconditioner_setup"] = time.perf_counter() - self.start_time
+        # self.prof["preconditioner_setup"] = time.perf_counter() - self.start_time
         self._assemble_rhs(Xstore)
 
         initGMRES = (
@@ -418,7 +412,7 @@ class TStepBiem:
                 x0=initGMRES.cpu().numpy(),
                 callback=counter,
             )
-        self.prof["gmres_total"] = time.perf_counter() - self.start_time
+        # self.prof["gmres_total"] = time.perf_counter() - self.start_time
 
         iflag = info != 0
         Xn = self._cupy_to_torch(Xn, dtype=torch.float32)
@@ -429,16 +423,16 @@ class TStepBiem:
         Xn_reshaped = Xn.view(self.nv, 3, N)
         X_ = Xn_reshaped[:, 0:2, :].reshape(self.nv, 2 * N).transpose(0, 1).clone()
         sigma_ = Xn_reshaped[:, 2, :].T.clone().to(dtype=torch.float64)
-        end_time = time.perf_counter()
+        # end_time = time.perf_counter()
 
-        if self.rank == 0:
-            print("Total time:", end_time - self.start_time)
-            print(self.prof)
+        # if self.rank == 0:
+            # print("Total time:", end_time - self.start_time)
+            # print(self.prof)
 
         return X_, sigma_, eta, RS, counter.niter, iflag
 
     def time_matvec(self, Xn):
-        start_matvec = time.perf_counter()
+        # start_matvec = time.perf_counter()
         Xn = self._cupy_to_torch(Xn, dtype=torch.float64)
 
         op = self.op
@@ -457,13 +451,14 @@ class TStepBiem:
         sigmaM_local = Xn_reshaped_local[:, 2, :].T.contiguous()
 
         f_local = vesicle_local.tracJump(Xm_local, sigmaM_local)
-        f_local_time = time.perf_counter() - start_matvec
+        # f_local_time = time.perf_counter() - start_matvec
 
         Gf_local = op.exactStokesSLdiag(vesicle_local, self.Galpert_local, f_local)
-        Gf_local_time = time.perf_counter()- start_matvec
+        # Gf_local_time = time.perf_counter()- start_matvec
 
-        f = self._gather_cat(f_local, self._gather_f_buf, dim=1)
-        gf_dist_time = time.perf_counter()- start_matvec
+        dist.all_gather(self._gather_f_buf, f_local, group=self.group)
+        # gf_dist_time = time.perf_counter()- start_matvec
+        f = torch.cat(self._gather_f_buf, dim=1).contiguous()
 
         SLP = self.SLP
         Fslp_local = op.dist_nearSingInt_rbf(
@@ -477,8 +472,9 @@ class TStepBiem:
             self.start,
             self.end,
             self.rank,
+            group=self.group,
         )
-        fslp_local_time = time.perf_counter()- start_matvec
+        # fslp_local_time = time.perf_counter()- start_matvec
 
         alpha_local = ((1.0 + vesicle_local.viscCont) / 2).to(
             self.device, dtype=Gf_local.dtype
@@ -488,7 +484,7 @@ class TStepBiem:
             - self.dt * Gf_local / alpha_local
             - self.dt * Fslp_local / alpha_local
         )
-        valPos_local_time = time.perf_counter()- start_matvec
+        # valPos_local_time = time.perf_counter()- start_matvec
         valTen = vesicle_local.surfaceDiv(Xm_local)
 
         val_local = (
@@ -505,18 +501,19 @@ class TStepBiem:
             .contiguous()
         )
 
-        val_global = self._gather_cat(val_local, self._gather_val_buf, dim=0)
-        gather_val_buf_local_time = time.perf_counter() - start_matvec 
-        matvec_time = time.perf_counter() - start_matvec
-        if self.rank == 0:
-            #print("f_local_time", f_local_time)
-            #print("Gf_local_time", Gf_local_time)
-            #print("gf_dist_time", gf_dist_time)
-            #print("fslp_local_time", fslp_local_time)
-            #print("valPos_local_time", valPos_local_time)
-            #print("gather_val_buf_local_time", gather_val_buf_local_time)
-            #print("matvec_time", matvec_time)
-            self.prof["matvec_total"] += matvec_time
+        dist.all_gather(self._gather_val_buf, val_local, group=self.group)
+        # gather_val_buf_local_time = time.perf_counter() - start_matvec 
+        val_global = torch.cat(self._gather_val_buf, dim=0).contiguous()
+        # matvec_time = time.perf_counter() - start_matvec
+        #if self.rank == 0:
+        #    print("f_local_time", f_local_time)
+        #    print("Gf_local_time", Gf_local_time)
+        #    print("gf_dist_time", gf_dist_time)
+        #    print("fslp_local_time", fslp_local_time)
+        #    print("valPos_local_time", valPos_local_time)
+        #    print("gather_val_buf_local_time", gather_val_buf_local_time)
+        #    print("matvec_time", matvec_time)
+        #    self.prof["matvec_total"] += matvec_time
 
 
         if torch.cuda.is_available():
@@ -538,7 +535,9 @@ class TStepBiem:
         ).squeeze(-1)
         val_local_flat = val_local.reshape(-1).contiguous()
 
-        val_global = self._gather_flat_preconditioner(val_local_flat)
+        gathered = [torch.empty_like(val_local_flat) for _ in range(self.size)]
+        dist.all_gather(gathered, val_local_flat, group=self.group)
+        val_global = torch.cat(gathered, dim=0).contiguous()
 
         if torch.cuda.is_available():
             return self._torch_to_cupy(val_global)

@@ -15,12 +15,23 @@ from biem_support import (
     exactStokesSL_onlyself_old,
 )
 
+
 def check_finite(name, x, rank):
     if not torch.isfinite(x).all():
         bad = (~torch.isfinite(x)).sum().item()
-        xmin = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).min().item() if x.numel() else 0.0
-        xmax = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).max().item() if x.numel() else 0.0
-        raise RuntimeError(f"[rank {rank}] {name} has non-finite values; bad={bad}, shape={tuple(x.shape)}, min={xmin}, max={xmax}")
+        xmin = (
+            torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).min().item()
+            if x.numel()
+            else 0.0
+        )
+        xmax = (
+            torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).max().item()
+            if x.numel()
+            else 0.0
+        )
+        raise RuntimeError(
+            f"[rank {rank}] {name} has non-finite values; bad={bad}, shape={tuple(x.shape)}, min={xmin}, max={xmax}"
+        )
 
 
 class Poten:
@@ -714,6 +725,7 @@ class Poten:
 
         # print(nearField)
         return farField + nearField, nearField
+
     def dist_nearSingInt_rbf(
         self,
         vesicleSou,
@@ -759,9 +771,6 @@ class Poten:
         Ntar = Xtar.shape[0] // 2
         nvTar = Xtar.shape[1]
 
-        # ------------------------------------------------------------
-        # 1. Global far-field/direct evaluation: still uses ALL sources
-        # ------------------------------------------------------------
         Nup = self.Nup
         Xup_full = interpft_vec(Xsou_full, Nup)
         fup_full = interpft_vec(f, Nup)
@@ -817,9 +826,6 @@ class Poten:
 
         check_finite("farField_before_correction", farField, rank)
 
-        # ------------------------------------------------------------
-        # 2. Work out which source vesicles are near this rank's targets
-        # ------------------------------------------------------------
         if not (tEqualS and nvSou_full > 1):
             return farField
 
@@ -829,9 +835,8 @@ class Poten:
             return farField
 
         # id1_global is a global target point index in [0, N * nv)
-        local_target_mask = (
-            (start * Nsou <= id1_global_all)
-            & (id1_global_all < end * Nsou)
+        local_target_mask = (start * Nsou <= id1_global_all) & (
+            id1_global_all < end * Nsou
         )
 
         if not torch.any(local_target_mask):
@@ -845,9 +850,6 @@ class Poten:
         if local_near_sources.numel() == 0:
             return farField
 
-        # ------------------------------------------------------------
-        # 3. Restrict expensive RBF setup to only those near sources
-        # ------------------------------------------------------------
         Xsou = Xsou_full[:, local_near_sources]
         f_near = f[:, local_near_sources]
 
@@ -866,8 +868,6 @@ class Poten:
 
         nvSou = Xsou.shape[1]
 
-        # Map global source ids -> local source ids in the restricted source list
-        # local_near_sources[j] is global source id for restricted local source j.
         source_map = torch.empty(
             nvSou_full,
             dtype=torch.long,
@@ -886,9 +886,6 @@ class Poten:
         # id2_local: local source id inside restricted source list
         info_local = (id1_global, id2_local)
 
-        # ------------------------------------------------------------
-        # 4. Build source-side RBF data only for near sources
-        # ------------------------------------------------------------
         upsample = -1
 
         if Nsou == 32:
@@ -1008,9 +1005,6 @@ class Poten:
 
         L = torch.linalg.cholesky(matrices.permute(2, 0, 1))
 
-        # ------------------------------------------------------------
-        # 5. Apply correction to local targets only
-        # ------------------------------------------------------------
         self.dist_nearFieldCorrectionUP_SOLVE(
             vesicleTar,
             start,
@@ -1027,7 +1021,6 @@ class Poten:
         )
 
         return farField
-
 
     def nearSingInt_rbf(
         self,
@@ -1206,31 +1199,12 @@ class Poten:
         ylayers,
         nlayers,
     ):
-        """
-        Near-field correction with:
-        - all source vesicles included
-        - only local target vesicles corrected
-
-        Parameters
-        ----------
-        vesicleTar : capsules
-            Local target vesicles only.
-        tar_start, tar_end : int
-            Global target vesicle ids corresponding to columns of vesicleTar.
-        info : tuple
-            Near info in global indexing.
-        L, velx, vely, xlayers, ylayers
-            Source-side data for ALL vesicles.
-        far_field : torch.Tensor
-            Local target output buffer, shape (2*N, tar_end - tar_start).
-        """
-
         if len(info[0]) == 0 or len(info[1]) == 0:
             return
 
         N = vesicleTar.N
-        nvTar = vesicleTar.nv  # local target count
-        nvSou = L.shape[0]  # all source vesicles
+        nvTar = vesicleTar.nv
+        nvSou = L.shape[0]
         device = far_field.device
 
         all_points = torch.cat(
@@ -1251,7 +1225,6 @@ class Poten:
         else:
             const = 0.0132
 
-        # Source-side data for ALL vesicles
         all_X = torch.cat(
             (xlayers.reshape(-1, 1, nvSou), ylayers.reshape(-1, 1, nvSou)),
             dim=1,
@@ -1268,7 +1241,6 @@ class Poten:
 
         id1_global, id2_global = info
 
-        # keep only target points belonging to this local target block
         mask = (tar_start * N <= id1_global) & (id1_global < tar_end * N)
         id1_global = id1_global[mask]
         id2_global = id2_global[mask]
@@ -1276,7 +1248,6 @@ class Poten:
         if id1_global.numel() == 0:
             return
 
-        # convert global target-point ids to local target-point ids
         id1_local = id1_global - tar_start * N
 
         if upsample <= 1:
@@ -1611,4 +1582,3 @@ class Poten:
 # op = Poten(N//2)
 # D = op.stokesDLmatrix(ves)
 # print(D.shape)
-

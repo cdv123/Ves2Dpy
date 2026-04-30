@@ -1,2 +1,0 @@
-use_torchrun,input_file,output_file,scp_file,farField,dt,T,wT,nv,N,pr,vortexSize,chanWidth,farFieldSpeed,nProcs,coarse_dt,use_vesnet,time
-true,../../npy-files/VF25_TG32Ves.mat,

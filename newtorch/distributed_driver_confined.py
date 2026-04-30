@@ -11,13 +11,14 @@ import numpy as np
 from curve_batch_compile import Curve
 from capsules import capsules
 import time
-from distributed_tstep_biem_scaled import TStepBiem
+from distributed_tstep_biem import TStepBiem
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from tqdm import tqdm
 from tools.filter import filterShape, interpft_vec
 from torch.profiler import profile, ProfilerActivity
 from parse_args import parse_cli, modify_options_params
+
 torch.set_default_dtype(torch.float64)
 
 
@@ -113,8 +114,7 @@ fileName, Xics = modify_options_params(args, options, prams)
 if prams["nv"] == 1:
     Xics = Xics - Xics.mean()
 
-# Assume oc is your geometry utility class (like curve_py in MATLAB)
-oc = Curve()  # You need to define this with required methods
+oc = Curve()
 
 # ------------------------------
 # Create geometry for confinement
@@ -184,7 +184,11 @@ if options["confined"]:
 # ------------------------------
 # Initialize variables
 # ------------------------------
-sigma = torch.zeros(prams["N"], prams["nv"], dtype=torch.float64) if sigma is None else sigma
+sigma = (
+    torch.zeros(prams["N"], prams["nv"], dtype=torch.float64)
+    if sigma is None
+    else sigma
+)
 eta = torch.zeros(2 * prams["Nbd"], prams["nvbd"])
 RS = torch.zeros(3, prams["nvbd"])
 
@@ -206,7 +210,7 @@ modes = torch.concatenate(
 ).to(X.device)  # .double()
 if prams["nv"] % size != 0:
     raise ValueError(
-        f"nv={prams['nv']} must be divisible by world_size={size} for distributed_tstep_biem_rewritten"
+        f"nv={prams['nv']} must be divisible by world_size={size} for distributed_tstep_biem"
     )
 print(prams)
 
@@ -222,7 +226,7 @@ t0 = time.time()
 
 for step in tqdm(range(int(prams["T"] / prams["dt"]))):
     # Perform time step
-    #print(X.dtype, sigma.dtype)
+    # print(X.dtype, sigma.dtype)
     Xnew, sigma, eta, RS, iter_, iflag = tt.time_step(X, sigma, eta, RS)
     sigma = torch.zeros(prams["N"], prams["nv"]) if sigma is None else sigma
     eta = torch.zeros(2 * prams["Nbd"], prams["nvbd"])
@@ -248,13 +252,15 @@ for step in tqdm(range(int(prams["T"] / prams["dt"]))):
     time_ += prams["dt"]
 
     # Display timestep info
-    #print("*****************************************************************")
-    #print(f"Time: {step} step, out of Tf: {prams['T']}")
-    #print(f"GMRES took {iter_} matvecs, successful {not iflag}")
-    #print("*****************************************************************")
+    # print("*****************************************************************")
+    # print(f"Time: {step} step, out of Tf: {prams['T']}")
+    # print(f"GMRES took {iter_} matvecs, successful {not iflag}")
+    # print("*****************************************************************")
 
     if rank == 0:
-        output = np.concatenate(([time_], X.cpu().numpy().T.flatten())).astype("float64")
+        output = np.concatenate(([time_], X.cpu().numpy().T.flatten())).astype(
+            "float64"
+        )
         with open(fileName, "ab") as fid:
             output.tofile(fid)
 t1 = time.time()

@@ -1,9 +1,0 @@
-Function	Time (s)	Share of total*
-translateVinfwTorch	0.2186	35.5% - parallelized
-predictNearLayers	0.1502	24.4% - parallelized
-invTenMatOnVback	0.1176	19.1% - parallelized
-relaxWTorchNet (incl. standardization)	0.0291	4.7%
-redistributeArcLength + alignCenterAngle (×5)	0.0268	4.4%
-standardizationStep	0.0247	4.0%
-computeStokesInteractions (all four entries combined)	0.0415	6.7% - cannot be parallelized
-Everything else (Cholesky, self-bend, area/length, near-field solve)	~0.0071	~1.2% - unsure if parallelizable

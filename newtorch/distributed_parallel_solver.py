@@ -1,14 +1,13 @@
 import torch
 import os
 from typing import Optional
+
 torch.set_default_dtype(torch.float32)
-from distributed_tstep_biem_scaled import TStepBiem
+from distributed_tstep_biem import TStepBiem
 from curve_batch_compile import Curve
 import numpy as np
 from torch import distributed as dist
 from tqdm import tqdm
-
-_worker: Optional["WorkerState"] = None
 
 
 class BIEMSolver:
@@ -39,8 +38,15 @@ class BIEMSolver:
         self.group_root = sub_ranks[0]
         torch.set_default_device(self.device)
         self.params["viscCont"] = self.params["viscCont"].to(self.device)
-        self.RS = torch.zeros(3, params["nvbd"], device=self.device, dtype=initPositions.dtype)
-        self.eta = torch.zeros(2 * params["Nbd"], params["nvbd"], device=self.device, dtype=initPositions.dtype)
+        self.RS = torch.zeros(
+            3, params["nvbd"], device=self.device, dtype=initPositions.dtype
+        )
+        self.eta = torch.zeros(
+            2 * params["Nbd"],
+            params["nvbd"],
+            device=self.device,
+            dtype=initPositions.dtype,
+        )
 
         self.oc = Curve()
         self.tt = TStepBiem(
@@ -58,7 +64,6 @@ class BIEMSolver:
             (torch.arange(0, params["N"] // 2), torch.arange(-params["N"] // 2, 0))
         ).to(initPositions.device)
 
-
     def solve(
         self,
         initPositions: torch.Tensor,
@@ -68,7 +73,7 @@ class BIEMSolver:
     ):
         torch.set_default_dtype(torch.float64)
         positions = initPositions.clone().to(self.device)
-        #newSigma = torch.zeros_like(sigmaStore, dtype=torch.float64) 
+        # newSigma = torch.zeros_like(sigmaStore, dtype=torch.float64)
         newSigma = sigmaStore.clone().to(self.device)
 
         if not self.active:
@@ -89,12 +94,13 @@ class BIEMSolver:
                 positions, newSigma, self.eta, self.RS
             )
             self.eta = torch.zeros(
-                2 * self.params["Nbd"], self.params["nvbd"],
-                device=self.device, dtype=positions.dtype
+                2 * self.params["Nbd"],
+                self.params["nvbd"],
+                device=self.device,
+                dtype=positions.dtype,
             )
             self.RS = torch.zeros(
-                3, self.params["nvbd"],
-                device=self.device, dtype=positions.dtype
+                3, self.params["nvbd"], device=self.device, dtype=positions.dtype
             )
             if self.options["reparameterization"]:
                 # Redistribute arc-length
@@ -142,7 +148,7 @@ class ParallelSolver:
         self.rank = rank
         self.options = options
         self.Xwalls = Xwalls
-        self.nv = params["nv"] 
+        self.nv = params["nv"]
 
     def run_solver(self, positions, sigmaStore, file_name, start_time):
         class _CommInfo:
@@ -193,7 +199,7 @@ class ParallelSolver:
 
         positions = positions.contiguous()
         sigmaStore = sigmaStore.contiguous()
-        
+
         print(f"Positions shape", positions.shape)
         print(f"sigmaStore shape", sigmaStore.shape)
 
@@ -247,4 +253,3 @@ class ParallelSolver:
                     os.remove(file)
 
         return all_positions_prime, all_sigma_prime
-
